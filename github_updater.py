@@ -19,7 +19,7 @@ FILE_PATH = "digest.json"
 API_BASE = "https://api.github.com"
 
 
-async def update_digest_json(week_label: str, papers: list[dict], pdf_s3_key: str) -> None:
+async def update_digest_json(week_label: str, papers: list[dict], pdf_s3_key: str, period: str = "week") -> None:
     headers = {
         "Authorization": f"Bearer {GITHUB_TOKEN}",
         "Accept": "application/vnd.github+json",
@@ -37,6 +37,7 @@ async def update_digest_json(week_label: str, papers: list[dict], pdf_s3_key: st
         # 2. Build new week entry
         week_entry = {
             "label": week_label,
+            "period": period,
             "date": datetime.utcnow().strftime("%Y-%m-%d"),
             "pdf_key": pdf_s3_key,
             "paper_count": len(papers),

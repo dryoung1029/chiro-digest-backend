@@ -21,14 +21,32 @@ SEARCH_TERMS = [
 ]
 
 
-async def run_digest_pipeline() -> dict:
-    week_label = datetime.utcnow().strftime("Week of %B %d, %Y")
-    log.info("Starting digest pipeline for: %s", week_label)
+PERIOD_DAYS = {
+    "week": 7,
+    "month": 30,
+    "3months": 90,
+    "6months": 180,
+}
+
+PERIOD_LABELS = {
+    "week": "1 Week",
+    "month": "1 Month",
+    "3months": "3 Months",
+    "6months": "6 Months",
+}
+
+
+async def run_digest_pipeline(period: str = "week") -> dict:
+    days = PERIOD_DAYS.get(period, 7)
+    period_label = PERIOD_LABELS.get(period, "1 Week")
+    now = datetime.utcnow()
+    label = f"{period_label} ending {now.strftime('%B %d, %Y')}"
+    log.info("Starting digest pipeline: %s (%d days)", label, days)
     papers = []
 
     # ── Step 1: Fetch from PubMed ──────────────────────────────────────────
     log.info("Fetching PubMed papers...")
-    since = (datetime.utcnow() - timedelta(days=7)).strftime("%Y/%m/%d")
+    since = (now - timedelta(days=days)).strftime("%Y/%m/%d")
     for term in SEARCH_TERMS:
         fetched = await fetch_recent_papers(term, since=since)
         papers.extend(fetched)
@@ -75,18 +93,19 @@ async def run_digest_pipeline() -> dict:
 
     # ── Step 4: Build PDF digest ───────────────────────────────────────────
     log.info("Building PDF digest...")
-    pdf_bytes, pdf_filename = build_digest_pdf(week_label, summarized)
+    pdf_bytes, pdf_filename = build_digest_pdf(label, summarized)
     s3_pdf_key = f"pdfs/{pdf_filename}"
     await upload_pdf(s3_pdf_key, pdf_bytes)
     log.info("PDF uploaded to s3://%s", s3_pdf_key)
 
     # ── Step 5: Update digest.json on GitHub ──────────────────────────────
     log.info("Updating digest.json on GitHub...")
-    await update_digest_json(week_label, summarized, s3_pdf_key)
+    await update_digest_json(label, summarized, s3_pdf_key, period=period)
     log.info("digest.json updated")
 
     return {
-        "week": week_label,
+        "period": period,
+        "label": label,
         "pubmed_papers": len([p for p in summarized if p.get("source") != "upload"]),
         "uploaded_pdfs": len([p for p in summarized if p.get("source") == "upload"]),
         "total": len(summarized),

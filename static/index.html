@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chiro Digest</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <header class="header">
+    <div class="header-inner">
+      <div class="brand">
+        <div class="brand-icon">+</div>
+        <div>
+          <div class="brand-name">Chiro Digest</div>
+          <div class="brand-sub">Chiropractic Research Digest</div>
+        </div>
+      </div>
+      <div class="header-status">
+        <span class="status-dot idle" id="status-dot"></span>
+        <span id="status-text">Ready</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="main">
+    <div class="container">
+
+      <!-- Control Panel -->
+      <section class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Generate New Digest</h2>
+        </div>
+        <div class="controls-body">
+          <div class="period-group">
+            <label class="control-label">Research Period</label>
+            <div class="period-buttons">
+              <button class="period-btn active" data-period="week">1 Week</button>
+              <button class="period-btn" data-period="month">1 Month</button>
+              <button class="period-btn" data-period="3months">3 Months</button>
+              <button class="period-btn" data-period="6months">6 Months</button>
+            </div>
+          </div>
+          <button class="generate-btn" id="generate-btn">
+            <span class="btn-icon">&#9654;</span>
+            Generate Digest
+          </button>
+        </div>
+        <div class="progress-bar" id="progress-bar" style="display:none">
+          <div class="progress-bar-inner"></div>
+        </div>
+        <div class="run-status" id="run-status" style="display:none"></div>
+      </section>
+
+      <!-- Digest Panel -->
+      <section class="panel" id="digest-panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title" id="digest-title">Latest Digest</h2>
+            <p class="panel-subtitle" id="digest-subtitle"></p>
+          </div>
+          <a class="pdf-btn" id="pdf-btn" style="display:none" target="_blank" rel="noopener">
+            &#8595; Download PDF
+          </a>
+        </div>
+        <div class="papers-grid" id="papers-grid">
+          <div class="empty-state">
+            <div class="empty-icon">&#128203;</div>
+            <p>No digest available yet. Generate one above to get started.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- History Panel -->
+      <section class="panel" id="history-panel" style="display:none">
+        <div class="panel-header">
+          <h2 class="panel-title">Previous Digests</h2>
+        </div>
+        <ul class="history-list" id="history-list"></ul>
+      </section>
+
+    </div>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
