@@ -27,7 +27,7 @@
   <main class="main">
     <div class="container">
 
-      <!-- Control Panel -->
+      <!-- Generate Panel -->
       <section class="panel">
         <div class="panel-header">
           <h2 class="panel-title">Generate New Digest</h2>
@@ -47,10 +47,36 @@
             Generate Digest
           </button>
         </div>
-        <div class="progress-bar" id="progress-bar" style="display:none">
-          <div class="progress-bar-inner"></div>
+
+        <!-- Step progress (shown while running) -->
+        <div id="step-progress" style="display:none">
+          <div class="progress-bar">
+            <div class="progress-bar-inner"></div>
+          </div>
+          <div class="step-status" id="step-status"></div>
         </div>
+
         <div class="run-status" id="run-status" style="display:none"></div>
+      </section>
+
+      <!-- Search Terms Panel -->
+      <section class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Search Terms</h2>
+          <div class="terms-actions">
+            <span class="terms-unsaved" id="terms-unsaved" style="display:none">Unsaved changes</span>
+            <button class="save-terms-btn" id="save-terms-btn" style="display:none">Save</button>
+          </div>
+        </div>
+        <div class="terms-body">
+          <div class="terms-chips" id="terms-chips">
+            <!-- chips rendered by JS -->
+          </div>
+          <div class="terms-add">
+            <input class="terms-input" id="terms-input" type="text" placeholder="Add a search term..." />
+            <button class="add-term-btn" id="add-term-btn">Add</button>
+          </div>
+        </div>
       </section>
 
       <!-- Digest Panel -->
