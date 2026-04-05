@@ -117,6 +117,14 @@ async def update_digest_json(week_label: str, papers: list[dict], pdf_s3_key: st
         log.info("digest.json updated successfully")
 
 
+async def get_digest_json() -> dict:
+    """Fetch the current digest.json directly from the GitHub API (bypasses Pages cache)."""
+    async with httpx.AsyncClient(timeout=15, headers=_headers()) as client:
+        resp = await client.get(f"{API_BASE}/repos/{REPO}/contents/{FILE_PATH}")
+        resp.raise_for_status()
+        return json.loads(base64.b64decode(resp.json()["content"]).decode())
+
+
 async def delete_digest_entry(date: str) -> None:
     """Remove the digest entry matching `date` (YYYY-MM-DD) from digest.json."""
     async with httpx.AsyncClient(timeout=30, headers=_headers()) as client:

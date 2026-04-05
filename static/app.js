@@ -2,9 +2,8 @@
  * Chiro Digest — frontend
  */
 
-const DIGEST_JSON_URL = 'https://dryoung1029.github.io/chiro-digest/digest.json';
-const S3_BASE         = 'https://chiro-digest-userdata.s3.us-west-2.amazonaws.com';
-const PERIOD_LABELS   = { week: '1 Week', month: '1 Month', '3months': '3 Months', '6months': '6 Months' };
+const S3_BASE       = 'https://chiro-digest-userdata.s3.us-west-2.amazonaws.com';
+const PERIOD_LABELS = { week: '1 Week', month: '1 Month', '3months': '3 Months', '6months': '6 Months' };
 
 let selectedPeriod   = 'week';
 let pollInterval     = null;
@@ -120,7 +119,7 @@ async function saveTerms() {
 // ── Load digest.json from GitHub Pages ───────────────────────────────────
 async function loadDigest() {
   try {
-    const res = await fetch(`${DIGEST_JSON_URL}?t=${Date.now()}`);
+    const res = await fetch('/digest');
     if (!res.ok) return;
     digestData = await res.json();
     const weeks = digestData.weeks || [];
@@ -191,7 +190,7 @@ function startPolling(period, initialStep) {
             setRunStatus(`⚠️ ${result.warning}`);
           } else {
             setRunStatus(`Done — ${result.total} papers summarized. Refreshing results...`);
-            reloadDigestWithRetry(5, 8000);
+            reloadDigestWithRetry();
           }
         } else {
           const errMsg = data.last_error ? ` — ${data.last_error}` : '';
@@ -206,17 +205,10 @@ function setStepDisplay(msg) {
   document.getElementById('step-status').textContent = msg;
 }
 
-async function reloadDigestWithRetry(attempts, delayMs) {
-  for (let i = 0; i < attempts; i++) {
-    await sleep(delayMs);
-    const prev = digestData?.weeks?.[0]?.date;
-    await loadDigest();
-    if ((digestData?.weeks?.[0]?.date ?? '') !== prev) {
-      setRunStatus('');
-      return;
-    }
-  }
-  setRunStatus('Done. Refresh the page if the new digest does not appear.');
+async function reloadDigestWithRetry() {
+  await sleep(1500);
+  await loadDigest();
+  setRunStatus('');
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }

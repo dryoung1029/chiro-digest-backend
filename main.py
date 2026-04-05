@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from github_updater import delete_digest_entry, get_search_terms, save_search_terms
+from github_updater import delete_digest_entry, get_digest_json, get_search_terms, save_search_terms
 from pipeline import run_digest_pipeline
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -135,6 +135,12 @@ async def put_terms(body: SearchTermsBody):
 
 
 # ── Digest management ─────────────────────────────────────────────────────────
+@app.get("/digest")
+async def get_digest():
+    """Return the current digest.json directly from GitHub API (no Pages cache lag)."""
+    return await get_digest_json()
+
+
 @app.delete("/digest")
 async def delete_digest(date: str = Query(..., description="Date of the digest entry to delete (YYYY-MM-DD)")):
     try:
