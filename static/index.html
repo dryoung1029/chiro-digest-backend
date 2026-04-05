@@ -47,15 +47,10 @@
             Generate Digest
           </button>
         </div>
-
-        <!-- Step progress (shown while running) -->
         <div id="step-progress" style="display:none">
-          <div class="progress-bar">
-            <div class="progress-bar-inner"></div>
-          </div>
+          <div class="progress-bar"><div class="progress-bar-inner"></div></div>
           <div class="step-status" id="step-status"></div>
         </div>
-
         <div class="run-status" id="run-status" style="display:none"></div>
       </section>
 
@@ -69,9 +64,7 @@
           </div>
         </div>
         <div class="terms-body">
-          <div class="terms-chips" id="terms-chips">
-            <!-- chips rendered by JS -->
-          </div>
+          <div class="terms-chips" id="terms-chips"></div>
           <div class="terms-add">
             <input class="terms-input" id="terms-input" type="text" placeholder="Add a search term..." />
             <button class="add-term-btn" id="add-term-btn">Add</button>
@@ -90,6 +83,41 @@
             &#8595; Download PDF
           </a>
         </div>
+
+        <!-- Briefing -->
+        <div class="briefing-section" id="briefing-section" style="display:none">
+          <div class="briefing-header">
+            <span class="briefing-icon">&#127911;</span>
+            <span class="briefing-label">Chiro Weekly Briefing</span>
+          </div>
+          <div class="briefing-text" id="briefing-text"></div>
+        </div>
+
+        <!-- Filter bar -->
+        <div class="filter-bar" id="filter-bar" style="display:none">
+          <div class="filter-group">
+            <span class="filter-label">Category</span>
+            <div class="filter-chips" id="category-filters">
+              <button class="filter-chip active" data-category="all">All</button>
+              <button class="filter-chip" data-category="trial">Trials</button>
+              <button class="filter-chip" data-category="observational">Observational</button>
+              <button class="filter-chip" data-category="review">Reviews</button>
+              <button class="filter-chip" data-category="case_report">Case Reports</button>
+            </div>
+          </div>
+          <div class="filter-group" id="type-filter-group" style="display:none">
+            <span class="filter-label">Study Type</span>
+            <div class="filter-chips" id="type-filters"></div>
+          </div>
+          <div class="filter-sort">
+            <label class="filter-label">Sort</label>
+            <select class="sort-select" id="sort-select">
+              <option value="relevance">By Relevance</option>
+              <option value="type">By Study Type</option>
+            </select>
+          </div>
+        </div>
+
         <div class="papers-grid" id="papers-grid">
           <div class="empty-state">
             <div class="empty-icon">&#128203;</div>

@@ -62,7 +62,7 @@ async def save_search_terms(terms: list[str]) -> None:
 
 # ── Digest CRUD ───────────────────────────────────────────────────────────────
 
-async def update_digest_json(week_label: str, papers: list[dict], pdf_s3_key: str, period: str = "week") -> None:
+async def update_digest_json(week_label: str, papers: list[dict], pdf_s3_key: str, period: str = "week", digest_summary: str = "") -> None:
     async with httpx.AsyncClient(timeout=30, headers=_headers()) as client:
         # 1. Get current file (need SHA for update)
         resp = await client.get(f"{API_BASE}/repos/{REPO}/contents/{FILE_PATH}")
@@ -78,6 +78,7 @@ async def update_digest_json(week_label: str, papers: list[dict], pdf_s3_key: st
             "date": datetime.utcnow().strftime("%Y-%m-%d"),
             "pdf_key": pdf_s3_key,
             "paper_count": len(papers),
+            "digest_summary": digest_summary,
             "papers": [
                 {
                     "title": p.get("title", ""),
@@ -90,6 +91,8 @@ async def update_digest_json(week_label: str, papers: list[dict], pdf_s3_key: st
                     "source": p.get("source", "pubmed"),
                     "url": p.get("url", ""),
                     "pmid": p.get("pmid", ""),
+                    "pmc_id": p.get("pmc_id"),
+                    "doi": p.get("doi"),
                 }
                 for p in papers
             ],

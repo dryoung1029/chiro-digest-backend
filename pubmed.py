@@ -87,8 +87,20 @@ def _parse_pubmed_xml(xml_text: str) -> list[dict]:
                 article.findtext(".//PubDate/Year")
                 or article.findtext(".//PubDate/MedlineDate", "")[:4]
             )
+            # Extract PMC ID and DOI for full-text linking
+            pmc_id = None
+            doi = None
+            for aid in article.findall(".//ArticleId"):
+                id_type = aid.get("IdType", "")
+                if id_type == "pmc":
+                    pmc_id = aid.text
+                elif id_type == "doi":
+                    doi = aid.text
+
             papers.append({
                 "pmid": pmid,
+                "pmc_id": pmc_id,
+                "doi": doi,
                 "title": title,
                 "abstract": abstract,
                 "authors": authors,

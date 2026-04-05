@@ -9,7 +9,7 @@ from typing import Callable, Optional
 from pubmed import fetch_recent_papers
 from s3_handler import list_unprocessed_pdfs, upload_pdf, mark_processed, download_pdf
 from pdf_processor import extract_text
-from summarizer import summarize_paper
+from summarizer import generate_digest_summary, summarize_paper
 from digest_builder import build_digest_pdf
 from github_updater import update_digest_json, get_search_terms
 
@@ -117,16 +117,24 @@ async def run_digest_pipeline(period: str = "week", set_step: Optional[Callable]
             "warning": f"Papers were found but all summarizations failed: {first_error}",
         }
 
-    # ── Step 5: Build PDF digest ───────────────────────────────────────────
+    # ── Step 5: Generate digest briefing ──────────────────────────────────
+    step("Writing digest briefing...")
+    digest_summary = ""
+    try:
+        digest_summary = await generate_digest_summary(summarized)
+    except Exception as exc:
+        log.warning("Digest summary generation failed: %s", exc)
+
+    # ── Step 6: Build PDF digest ───────────────────────────────────────────
     step("Building PDF digest...")
     pdf_bytes, pdf_filename = build_digest_pdf(label, summarized)
     s3_pdf_key = f"pdfs/{pdf_filename}"
     await upload_pdf(s3_pdf_key, pdf_bytes)
     log.info("PDF uploaded to s3://%s", s3_pdf_key)
 
-    # ── Step 6: Update digest.json on GitHub ──────────────────────────────
+    # ── Step 7: Update digest.json on GitHub ──────────────────────────────
     step("Updating GitHub digest.json...")
-    await update_digest_json(label, summarized, s3_pdf_key, period=period)
+    await update_digest_json(label, summarized, s3_pdf_key, period=period, digest_summary=digest_summary)
     log.info("digest.json updated")
 
     return {
