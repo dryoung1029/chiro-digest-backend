@@ -11,8 +11,9 @@ import httpx
 
 log = logging.getLogger(__name__)
 
-NCBI_EMAIL = os.getenv("NCBI_EMAIL", "dryoung1029@gmail.com")
-ENTREZ_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+NCBI_EMAIL   = os.getenv("NCBI_EMAIL", "dryoung1029@gmail.com")
+NCBI_API_KEY = os.getenv("NCBI_API_KEY", "")  # 10 req/sec with key vs 3 without
+ENTREZ_BASE  = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 
 
 async def fetch_recent_papers(term: str, since: str, max_results: int = 20) -> list[dict]:
@@ -22,14 +23,15 @@ async def fetch_recent_papers(term: str, since: str, max_results: int = 20) -> l
     """
     async with httpx.AsyncClient(timeout=30) as client:
         # Step 1: search
+        base_params = {"email": NCBI_EMAIL, **({"api_key": NCBI_API_KEY} if NCBI_API_KEY else {})}
         ids = await _get_with_retry(client, f"{ENTREZ_BASE}/esearch.fcgi", params={
+            **base_params,
             "db": "pubmed",
             "term": f"{term}[Title/Abstract]",
             "mindate": since,
             "datetype": "pdat",
             "retmax": max_results,
             "retmode": "json",
-            "email": NCBI_EMAIL,
         })
         id_list = ids.json().get("esearchresult", {}).get("idlist", [])
         if not id_list:
@@ -40,10 +42,10 @@ async def fetch_recent_papers(term: str, since: str, max_results: int = 20) -> l
 
         # Step 2: fetch details
         fetch_resp = await _get_with_retry(client, f"{ENTREZ_BASE}/efetch.fcgi", params={
+            **base_params,
             "db": "pubmed",
             "id": ",".join(id_list),
             "retmode": "xml",
-            "email": NCBI_EMAIL,
         })
 
     return _parse_pubmed_xml(fetch_resp.text)
