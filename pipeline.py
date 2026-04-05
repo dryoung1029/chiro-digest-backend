@@ -95,6 +95,7 @@ async def run_digest_pipeline(period: str = "week", set_step: Optional[Callable]
 
     # ── Step 4: Summarize with Claude ─────────────────────────────────────
     summarized = []
+    first_error: str | None = None
     for idx, paper in enumerate(unique_papers):
         step(f"Summarizing with Claude ({idx + 1}/{len(unique_papers)})...")
         if paper.get("source") == "upload" and "clinical_takeaway" in paper:
@@ -105,13 +106,15 @@ async def run_digest_pipeline(period: str = "week", set_step: Optional[Callable]
             summarized.append(summary)
         except Exception as exc:
             log.warning("  Summarization failed for %s: %s", paper.get("pmid", "?"), exc)
+            if first_error is None:
+                first_error = str(exc)
 
     if not summarized:
         return {
             "period": period,
             "label": label,
             "total": 0,
-            "warning": "Papers were found but all summarizations failed. Check ANTHROPIC_API_KEY.",
+            "warning": f"Papers were found but all summarizations failed: {first_error}",
         }
 
     # ── Step 5: Build PDF digest ───────────────────────────────────────────
