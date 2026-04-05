@@ -6,7 +6,6 @@ import asyncio
 import logging
 import os
 import xml.etree.ElementTree as ET
-from typing import Optional
 
 import httpx
 
@@ -17,39 +16,52 @@ ENTREZ_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 
 
 async def fetch_recent_papers(term: str, since: str, max_results: int = 20) -> list[dict]:
-    """Search PubMed for `term` published since `since` (YYYY/MM/DD)."""
+    """Search PubMed for `term` published since `since` (YYYY/MM/DD).
+
+    Includes retry logic for NCBI's 3 req/sec rate limit (HTTP 429).
+    """
     async with httpx.AsyncClient(timeout=30) as client:
         # Step 1: search
-        search_resp = await client.get(
-            f"{ENTREZ_BASE}/esearch.fcgi",
-            params={
-                "db": "pubmed",
-                "term": f"{term}[Title/Abstract]",
-                "mindate": since,
-                "datetype": "pdat",
-                "retmax": max_results,
-                "retmode": "json",
-                "email": NCBI_EMAIL,
-            },
-        )
-        search_resp.raise_for_status()
-        ids = search_resp.json().get("esearchresult", {}).get("idlist", [])
-        if not ids:
+        ids = await _get_with_retry(client, f"{ENTREZ_BASE}/esearch.fcgi", params={
+            "db": "pubmed",
+            "term": f"{term}[Title/Abstract]",
+            "mindate": since,
+            "datetype": "pdat",
+            "retmax": max_results,
+            "retmode": "json",
+            "email": NCBI_EMAIL,
+        })
+        id_list = ids.json().get("esearchresult", {}).get("idlist", [])
+        if not id_list:
             return []
 
+        # Brief pause between the two requests for this term
+        await asyncio.sleep(0.4)
+
         # Step 2: fetch details
-        fetch_resp = await client.get(
-            f"{ENTREZ_BASE}/efetch.fcgi",
-            params={
-                "db": "pubmed",
-                "id": ",".join(ids),
-                "retmode": "xml",
-                "email": NCBI_EMAIL,
-            },
-        )
-        fetch_resp.raise_for_status()
+        fetch_resp = await _get_with_retry(client, f"{ENTREZ_BASE}/efetch.fcgi", params={
+            "db": "pubmed",
+            "id": ",".join(id_list),
+            "retmode": "xml",
+            "email": NCBI_EMAIL,
+        })
 
     return _parse_pubmed_xml(fetch_resp.text)
+
+
+async def _get_with_retry(client: httpx.AsyncClient, url: str, params: dict, retries: int = 4) -> httpx.Response:
+    """GET with exponential backoff on 429."""
+    delay = 1.0
+    for attempt in range(retries):
+        resp = await client.get(url, params=params)
+        if resp.status_code != 429:
+            resp.raise_for_status()
+            return resp
+        wait = delay * (2 ** attempt)
+        log.warning("NCBI 429 on attempt %d — retrying in %.1fs", attempt + 1, wait)
+        await asyncio.sleep(wait)
+    resp.raise_for_status()  # raise on final attempt
+    return resp
 
 
 def _parse_pubmed_xml(xml_text: str) -> list[dict]:

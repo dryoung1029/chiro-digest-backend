@@ -1,6 +1,7 @@
 """
 Main digest pipeline — orchestrates all steps end-to-end.
 """
+import asyncio
 import logging
 from datetime import datetime, timedelta
 
@@ -47,10 +48,12 @@ async def run_digest_pipeline(period: str = "week") -> dict:
     # ── Step 1: Fetch from PubMed ──────────────────────────────────────────
     log.info("Fetching PubMed papers...")
     since = (now - timedelta(days=days)).strftime("%Y/%m/%d")
-    for term in SEARCH_TERMS:
+    for i, term in enumerate(SEARCH_TERMS):
         fetched = await fetch_recent_papers(term, since=since)
         papers.extend(fetched)
         log.info("  '%s' → %d papers", term, len(fetched))
+        if i < len(SEARCH_TERMS) - 1:
+            await asyncio.sleep(0.5)  # stay under NCBI's 3 req/sec limit
 
     # Deduplicate by PMID
     seen = set()
