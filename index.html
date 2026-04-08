@@ -200,18 +200,13 @@ input[type=number]:focus{outline:none;border-color:var(--cyan)}
    MOBILE  (≤ 640px)
 ══════════════════════════════════════════ */
 @media(max-width:640px){
-  /* Header: single compact row — clinic name, date, cash, buttons only */
-  #hdr{padding:5px 10px;gap:8px;flex-wrap:nowrap;align-items:center}
+  /* Header: clinic name + buttons only — all stats shown in mobile-stats strip below */
+  #hdr{padding:5px 10px;gap:6px;flex-wrap:nowrap;align-items:center;overflow:hidden;max-width:100%}
   #hdr .clinic-name{font-size:13px;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-  /* Hide patients, rating, rep bar — shown in mobile-stats strip instead */
-  #hdr .hdr-stat:nth-child(4),
-  #hdr .hdr-stat:nth-child(5),
-  #rep-bar-wrap{display:none}
-  .hdr-stat{min-width:0;flex-shrink:0}
-  .hdr-stat .label{font-size:9px}
-  .hdr-stat .value{font-size:12px}
-  #hdr-btns{gap:3px;flex-shrink:0;margin-left:auto}
-  #hdr-btns .btn{padding:4px 8px;font-size:10px}
+  /* Hide ALL stat blocks from header on mobile — they live in the stats strip */
+  #hdr .hdr-stat, #rep-bar-wrap{display:none!important}
+  #hdr-btns{gap:4px;flex-shrink:0;margin-left:auto}
+  #hdr-btns .btn{padding:5px 10px;font-size:11px;white-space:nowrap;flex-shrink:0}
 
   /* Mobile stats strip */
   #mobile-stats{display:flex!important;background:var(--s2);border-bottom:1px solid var(--border);padding:5px 10px;gap:0;overflow-x:auto;flex-shrink:0}
@@ -1962,8 +1957,8 @@ function pushCEQuestion(G){
     title:`📚 CE Requirement — Question ${qi+1} of 3`,
     msg:`Annual continuing education requirement (Year ${G.year}).\n\n${q.q}`,
     choices:()=>q.opts.map(o=>({label:o,desc:''})),
-    effect:(G,li,choice)=>{
-      const wasCorrect=(choice===q.correct);
+    effect:(G,li,ctx)=>{
+      const wasCorrect=(ctx.choice===q.correct);
       if(wasCorrect) G.ceQuiz.correct++;
       const feedbackMsg=wasCorrect
         ?`✅ Correct!\n\n${qi+2<=3?'Next question...':'Quiz complete!'}`
@@ -2646,6 +2641,15 @@ function rollRandomEvents(G){
     if(ev.id==='staff_quit' && !loc.staff.length) continue;
     if(ev.id==='malpractice' && G.totalMonths<3) continue;
     if(ev.id==='competitor' && G.year<2) chance*=0.3;
+    // Require patients for patient-facing events
+    const locPts=(loc.patients.cash||0)+(loc.patients.insured||0);
+    if(['pt_complaint','angry_review_threat','slip_fall','prepaid_pkg','malpractice','major_lawsuit'].includes(ev.id) && locPts<1) continue;
+    // Require an associate DC for associate-specific events
+    const hasAssoc=loc.staff.some(id=>G.staffPool[id]?.role==='associate');
+    if(ev.id==='assoc_partner' && !hasAssoc) continue;
+    // Require non-owner staff for staff management events
+    const hasNonOwnerStaff=loc.staff.some(id=>!G.staffPool[id]?.isOwner);
+    if(['sched_crisis','staff_crisis'].includes(ev.id) && !hasNonOwnerStaff) continue;
     if(Math.random()<chance){
       if(ev.type==='neg') throttle.neg++;
       eventQueue.push({ev, li, ctx:{}});
@@ -3543,6 +3547,7 @@ function renderSidebar(){
     const netClass=net>=0?'pos':'neg';
     const cashClass=G.cash<5000?'neg':G.cash<15000?'warn':'pos';
     ms.innerHTML=`
+      <div class="mstat"><span class="mk">Date</span><span class="mv">${MONTHS[G.month-1]} Y${G.year}</span></div>
       <div class="mstat"><span class="mk">Cash</span><span class="mv ${cashClass}">$${fmtK(G.cash)}</span></div>
       <div class="mstat"><span class="mk">Rev</span><span class="mv pos">$${fmtK(rev)}</span></div>
       <div class="mstat"><span class="mk">Exp</span><span class="mv neg">$${fmtK(exp)}</span></div>
