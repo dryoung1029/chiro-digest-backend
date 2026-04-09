@@ -33,6 +33,10 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
 .hdr-stat .value.pos{color:var(--green)}
 .hdr-stat .value.neg{color:var(--red)}
 .hdr-stat .value.warn{color:var(--amber)}
+@keyframes cashFlashNeg{0%{background:rgba(255,80,80,0.45);border-radius:4px}100%{background:transparent}}
+@keyframes cashFlashPos{0%{background:rgba(0,220,110,0.45);border-radius:4px}100%{background:transparent}}
+.cash-flash-neg{animation:cashFlashNeg .7s ease-out}
+.cash-flash-pos{animation:cashFlashPos .35s ease-out}
 #rep-bar-wrap{display:flex;align-items:center;gap:6px;flex:1;max-width:200px}
 #rep-bar-wrap .label{font-size:10px;color:var(--muted);white-space:nowrap}
 .bar-outer{flex:1;height:8px;background:var(--s3);border-radius:4px;overflow:hidden}
@@ -3221,7 +3225,7 @@ function _advanceMonthCore(){
   if(G.gameOver||G.gameWon){ showEndScreen(); return; }
   // Process any queued events via modal chain
   if(eventQueue.length>0){ processNextEvent(); return; }
-  triggerMonthAnimation();
+  triggerMonthAnimation(totalRev);
   document.getElementById('end-month-btn').disabled=false;
   render();
 }
@@ -3405,8 +3409,10 @@ function renderHeader(){
   document.getElementById('hdr-clinic').textContent=G.clinicName;
   document.getElementById('hdr-date').textContent=`${MONTHS[G.month-1]} Y${G.year}`;
   const cashEl=document.getElementById('hdr-cash');
-  cashEl.textContent='$'+fmtN(G.cash);
-  cashEl.className='value '+(G.cash<0?'neg':G.cash<5000?'warn':'pos');
+  if(!cashAnimating){
+    cashEl.textContent='$'+fmtN(G.cash);
+    cashEl.className='value '+(G.cash<0?'neg':G.cash<5000?'warn':'pos');
+  }
   const totalPts=G.locs.reduce((s,l)=>s+l.patients.cash+l.patients.insured+(l.patients.wellness||0)+(l.patients.periodic||0)+(l.patients.massageCash||0)+(l.patients.massageInsured||0),0);
   document.getElementById('hdr-patients').textContent=totalPts;
   const stars=starRating(loc.reviews);
@@ -3641,20 +3647,39 @@ function renderOverview(){
   for(let seIdx=0;seIdx<loc.specialEquip.length;seIdx++){
     const se=loc.specialEquip[seIdx];
     const cat=EQUIPMENT_CATALOG.find(c=>c.id===se.id);
-    const rev=Math.floor((total*3)*(cat.baseUptake*(1+se.mktIndex/100))*cat.rpv);
-    const cost=maintenanceCost(se);
-    const gain=maintenanceGain(se);
+    const baseUptake=cat.baseUptake;
+    const effectiveUptake=baseUptake*(1+se.mktIndex/100);
+    const sessionsPerMonth=Math.floor(total*3*effectiveUptake);
+    const rev=sessionsPerMonth*cat.rpv;
+    const dcHrsCost=se.mktIndex>0?Math.round(cat.mktHrs*(se.mktIndex/100)*10)/10:0;
+    const maintCost=maintenanceCost(se);
+    const maintGain=maintenanceGain(se);
     const maintained=se.maintainedThisMonth;
+    const condColor=se.condition>70?'var(--green)':se.condition>40?'var(--amber)':'var(--red)';
     const ageNote=se.age>12?` <span style="color:var(--amber);font-size:9px">(${se.age}mo old)</span>`:'';
-    speqHtml+=`<div style="border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:8px;background:var(--s2)">
-      <div class="field-row" style="margin-bottom:6px">
-        <label>${cat.name}${ageNote} — Condition: ${se.condition}%<br><span style="font-size:10px;color:var(--green)">~$${fmtN(rev)}/mo</span></label>
-        <button class="btn btn-amber" style="font-size:10px;padding:2px 8px" ${maintained?'disabled':G.cash<cost?'disabled':''} onclick="maintainEquipment(${li},${seIdx},true)">
-          ${maintained?'✓ Maintained':'Maintain $'+cost}
-        </button>
+    speqHtml+=`<div style="border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px;background:var(--s2)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+        <div>
+          <div style="font-weight:700;font-size:13px">${cat.name}${ageNote}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">$${cat.rpv}/session · ${Math.round(effectiveUptake*100)}% of visits use it · ~${sessionsPerMonth} sessions/mo</div>
+          <div style="font-size:12px;color:var(--green);margin-top:2px;font-weight:600">~$${fmtN(rev)}/mo revenue</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:11px;color:${condColor};font-weight:700">Condition: ${se.condition}%</div>
+          <button class="btn btn-amber" style="font-size:10px;padding:3px 8px;margin-top:4px" ${maintained?'disabled':G.cash<maintCost?'disabled':''} onclick="maintainEquipment(${li},${seIdx},true)">
+            ${maintained?'✓ Maintained':'Maintain $'+maintCost+' (+'+maintGain+'%)'}
+          </button>
+        </div>
       </div>
-      <div class="field-row">
-        <label>Marketing Index <span style="font-size:10px;color:var(--muted)">+${gain}% cond if maintained</span></label>
+      <div class="field-row" style="align-items:center">
+        <div>
+          <label style="display:block">Promote This Service</label>
+          <div style="font-size:10px;color:var(--muted)">
+            ${se.mktIndex===0
+              ? `Base uptake only (${Math.round(baseUptake*100)}% of visits). Slider increases to ${Math.round(baseUptake*2*100)}% max.`
+              : `Uptake boosted to ${Math.round(effectiveUptake*100)}% — costs ${dcHrsCost} DC hrs/mo capacity`}
+          </div>
+        </div>
         <div class="field-right">
           <input type="range" min="0" max="100" step="10" value="${se.mktIndex}" data-speq="${se.id}" oninput="setSpeqMkt('${se.id}',+this.value);renderTab('overview')">
           <span class="val-display">${se.mktIndex}%</span>
@@ -4468,13 +4493,39 @@ let canvasW=0,canvasH=140;
 let pendingSprites=0;   // patients queued to animate this month
 let spawnTimer=0;       // frames until next spawn
 let spawnInterval=15;   // frames between spawns (recalculated each month)
+let cashAnimating=false;     // true while revenue is trickling in via patient animation
+let cashDisplayValue=0;      // displayed cash amount during animation
+let revenuePerSprite=0;      // revenue credited per patient arrival
+let animTotalSprites=0;      // total patient sprites for this animation batch
 
-function triggerMonthAnimation(){
+function triggerMonthAnimation(totalRev){
   if(!G||!G.locs||G.totalMonths===0) return;
   const total=G.locs.reduce((s,l)=>s+l.patients.cash+l.patients.insured,0);
   pendingSprites=total;
   spawnInterval=Math.max(5,Math.floor(200/Math.max(total,1)));
   spawnTimer=0;
+  animTotalSprites=total;
+  // Set up revenue trickle animation
+  if(total>0 && totalRev>0){
+    cashAnimating=true;
+    cashDisplayValue=G.cash-totalRev; // start display at post-expense, pre-revenue value
+    revenuePerSprite=totalRev/total;
+    _updateCashDisplay();
+    // Flash red to signal expenses just left
+    const cashEl=document.getElementById('hdr-cash');
+    if(cashEl){cashEl.classList.remove('cash-flash-neg','cash-flash-pos');void cashEl.offsetWidth;cashEl.classList.add('cash-flash-neg');}
+  } else {
+    cashAnimating=false;
+  }
+}
+
+function _updateCashDisplay(flash){
+  const val=cashAnimating?Math.round(cashDisplayValue):G.cash;
+  const cashEl=document.getElementById('hdr-cash');
+  if(!cashEl) return;
+  cashEl.textContent='$'+fmtN(val);
+  cashEl.className='value '+(val<0?'neg':val<5000?'warn':'pos');
+  if(flash==='pos'){cashEl.classList.remove('cash-flash-pos');void cashEl.offsetWidth;cashEl.classList.add('cash-flash-pos');}
 }
 
 function initCanvas(){
@@ -4522,6 +4573,12 @@ function animLoop(){
     drawSprite(ctx,s);
     return s.x<canvasW+50 && s.life>0;
   });
+  // Finalize revenue animation once all patients have entered
+  if(cashAnimating && pendingSprites===0 && sprites.length===0){
+    cashAnimating=false;
+    cashDisplayValue=G.cash;
+    _updateCashDisplay();
+  }
   animFrame=requestAnimationFrame(animLoop);
 }
 
@@ -4632,7 +4689,14 @@ function updateSprite(s){
   if(s.state==='walking_in'){
     s.x+=s.vx;
     const doorX=canvasW*0.5;
-    if(s.x>=doorX-10){ s.state='inside'; s.insideCounter=0; }
+    if(s.x>=doorX-10){
+      s.state='inside'; s.insideCounter=0;
+      // Credit this patient's revenue share to the live display
+      if(cashAnimating && revenuePerSprite>0){
+        cashDisplayValue+=revenuePerSprite;
+        _updateCashDisplay('pos');
+      }
+    }
   } else if(s.state==='inside'){
     s.insideCounter++;
     if(s.insideCounter>s.insideTime){ s.state='walking_out'; s.vx=randF(0.6,1.3); }
