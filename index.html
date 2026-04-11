@@ -851,13 +851,17 @@ const LOAN_PRODUCTS = [
 ];
 
 const MARKETING_ACTIVITIES = {
-  screening: {label:'Spinal Screening', costBase:75,  timeHrs:4, maxPerMonth:4, leadsBase:14, repBonus:0},
-  healthtalk:{label:'Health Talk',      costBase:50,  timeHrs:3, maxPerMonth:2, leadsBase:6,  repBonus:2},
-  newspaper: {label:'Newspaper Ad',     costBase:400, timeHrs:1, maxPerMonth:1, leadsBase:5,  repBonus:0},
-  socialmedia:{label:'Social Media',    costBase:0,   timeHrs:20,maxPerMonth:1, leadsBase:0,  repBonus:0}, // budget-based
-  healthfair:{label:'Health Fair',      costBase:300, timeHrs:8, maxPerMonth:1, leadsBase:25, repBonus:4},
-  directmail:{label:'Direct Mail',      costBase:600, timeHrs:2, maxPerMonth:1, leadsBase:6,  repBonus:0},
+  screening: {label:'Spinal Screening', costBase:75,  timeHrs:4, maxPerMonth:4, leadsBase:8,  repBonus:0, mp:1},
+  healthtalk:{label:'Health Talk',      costBase:50,  timeHrs:3, maxPerMonth:2, leadsBase:4,  repBonus:2, mp:1},
+  newspaper: {label:'Newspaper Ad',     costBase:400, timeHrs:1, maxPerMonth:1, leadsBase:3,  repBonus:0, mp:1},
+  socialmedia:{label:'Social Media',    costBase:0,   timeHrs:20,maxPerMonth:1, leadsBase:0,  repBonus:0, mp:0}, // MP charged per $300 bracket
+  healthfair:{label:'Health Fair',      costBase:300, timeHrs:8, maxPerMonth:1, leadsBase:16, repBonus:4, mp:3},
+  directmail:{label:'Direct Mail',      costBase:600, timeHrs:2, maxPerMonth:1, leadsBase:4,  repBonus:0, mp:1},
 };
+// Monthly Marketing Points: base per difficulty + bonuses from manager/certifications
+// Each activity costs MP (see mp field above). Social media costs 1 MP per $300 budget.
+// Hard cap: can't activate activities that would exceed available MP.
+const BASE_MP = {easy:6, normal:4, hard:3};
 
 // Seasonal new-patient flow multipliers (Jan–Dec)
 // Jan: new-year resolutions peak; Jun–Aug: summer vacation dip; Nov–Dec: holiday quiet
@@ -2273,6 +2277,30 @@ function calcDCHoursAvailable(G, li){
   return {totalHrs, mktHrs, available: Math.max(0, totalHrs - mktHrs), numDCs, hasMgr};
 }
 
+// ── Marketing Points (MP): monthly reach budget ──
+// MP is a hard cap on total marketing activity regardless of DC hours available.
+// Base MP by difficulty; +1 per manager; +1 per 'pediatric' or 'sports_chiro' cert earned.
+function calcMarketingPoints(G, li){
+  const loc = G.locs[li];
+  const d   = loc.decisions;
+  const hasMgr = loc.staff.some(id=>G.staffPool[id]?.role==='manager');
+  const base = (BASE_MP[G.difficulty]||4) + (hasMgr ? 1 : 0);
+  // Cert bonuses
+  const certs = G.certs||[];
+  const certBonus = (certs.includes('pediatric')?1:0) + (certs.includes('sports_chiro')?1:0);
+  const total = base + certBonus;
+  // Count MP in use
+  let used = 0;
+  used += (d.screening||0) * MARKETING_ACTIVITIES.screening.mp;
+  used += (d.healthtalk||0) * MARKETING_ACTIVITIES.healthtalk.mp;
+  used += d.newspaper  ? MARKETING_ACTIVITIES.newspaper.mp  : 0;
+  used += d.healthfair ? MARKETING_ACTIVITIES.healthfair.mp : 0;
+  used += d.directmail ? MARKETING_ACTIVITIES.directmail.mp : 0;
+  // Social media costs 1 MP per $300 bracket
+  used += Math.ceil((d.socialBudget||0) / 300);
+  return {total, used, remaining: Math.max(0, total - used)};
+}
+
 function calcMassageCapacity(G, li){
   // Massage room/therapist sharing rules:
   // - 1 therapist per room = 8 patients/day
@@ -2333,7 +2361,7 @@ function calcMarketingLeads(G, li){
   leads += d.screening * (MARKETING_ACTIVITIES.screening.leadsBase * randF(0.7,1.3));
   leads += d.healthtalk * (MARKETING_ACTIVITIES.healthtalk.leadsBase * randF(0.7,1.3));
   if(d.newspaper) leads += MARKETING_ACTIVITIES.newspaper.leadsBase * randF(0.5,1.5);
-  if(d.socialBudget>0) leads += Math.sqrt(d.socialBudget/120)*randF(0.8,1.2);
+  if(d.socialBudget>0) leads += Math.sqrt(d.socialBudget/220)*randF(0.8,1.2); // diminishing returns, nerfed from /120
   if(d.healthfair) leads += MARKETING_ACTIVITIES.healthfair.leadsBase * randF(0.7,1.3);
   if(d.directmail) leads += MARKETING_ACTIVITIES.directmail.leadsBase * randF(0.6,1.4);
   leads *= (0.5 + repFactor*0.5);
@@ -4251,56 +4279,86 @@ function renderMarketing(){
     {key:'screening',label:'Spinal Screenings',type:'counter',max:4,val:d.screening,
      cost:`$${MARKETING_ACTIVITIES.screening.costBase}/event`,
      time:`${MARKETING_ACTIVITIES.screening.timeHrs*(hasMgr?.5:1)}h each${timeNote}`,
-     leads:'8–20 patients/event'},
+     leads:'4–12/event'},
     {key:'healthtalk',label:'Health Talks',type:'counter',max:2,val:d.healthtalk,
      cost:`$${MARKETING_ACTIVITIES.healthtalk.costBase}/event`,
      time:`${MARKETING_ACTIVITIES.healthtalk.timeHrs*(hasMgr?.5:1)}h each${timeNote}`,
-     leads:'3–10 pts, +2 rep'},
+     leads:'2–6 pts, +2 rep'},
     {key:'newspaper',label:'Newspaper Ad',type:'toggle',val:d.newspaper,
      cost:`$${MARKETING_ACTIVITIES.newspaper.costBase}/month`,
      time:`${hasMgr?0:MARKETING_ACTIVITIES.newspaper.timeHrs}h/month${timeNote}`,
-     leads:'2–8 patients'},
+     leads:'1–5 patients'},
     {key:'healthfair',label:'Health Fair',type:'toggle',val:d.healthfair,
      cost:`$${MARKETING_ACTIVITIES.healthfair.costBase}+$100/hr`,
      time:`${MARKETING_ACTIVITIES.healthfair.timeHrs*(hasMgr?.5:1)}h${timeNote}`,
-     leads:'15–35 pts, +4 rep'},
+     leads:'10–24 pts, +4 rep'},
     {key:'directmail',label:'Direct Mail',type:'toggle',val:d.directmail,
      cost:`$${MARKETING_ACTIVITIES.directmail.costBase}`,
      time:`${hasMgr?0:MARKETING_ACTIVITIES.directmail.timeHrs}h${timeNote}`,
-     leads:'3–10 patients'},
+     leads:'2–7 patients'},
   ];
 
+  const mp = calcMarketingPoints(G, li);
+  const mpPct = Math.min(100, mp.used/mp.total*100);
+  const mpColor = mp.remaining===0 ? 'var(--red)' : mp.remaining===1 ? 'var(--amber)' : 'var(--cyan)';
+
   let html=`<div class="card">
-    <div class="card-title">DC Time Budget</div>
-    <div class="field-row"><label>Marketing hours this month</label>
-      <div class="progress-ring" style="flex:1">
-        <div class="inline-bar" style="flex:1"><div class="inline-bar-fill ${mktHrs/totalHrs>0.6?'bar-red':'bar-amber'}" style="width:${Math.min(100,mktHrs/totalHrs*100)}%"></div></div>
-        <span class="mono" style="font-size:11px">${Math.round(mktHrs)} / ${totalHrs} hrs</span>
+    <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
+      <div style="flex:1;min-width:160px">
+        <div class="card-title">📣 Marketing Points</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <div style="flex:1;height:10px;background:var(--s3);border-radius:5px;overflow:hidden">
+            <div style="width:${mpPct}%;height:100%;background:${mpColor};border-radius:5px;transition:width .3s"></div>
+          </div>
+          <span style="font-family:var(--font-mono);font-size:13px;font-weight:700;color:${mpColor}">${mp.used} / ${mp.total} MP</span>
+        </div>
+        <div style="font-size:10px;color:var(--muted)">
+          ${mp.remaining===0?'<span style="color:var(--red)">⛔ No MP remaining — deactivate an activity to change mix</span>':
+            `<span style="color:var(--green)">${mp.remaining} MP free</span> · Each activity costs 1–3 MP`}
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-top:3px">+MP: hire manager (+1) · earn Sports/Pediatric cert (+1 each)</div>
+      </div>
+      <div style="flex:1;min-width:140px">
+        <div class="card-title">⏱ DC Time Budget</div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="flex:1;height:8px;background:var(--s3);border-radius:4px;overflow:hidden">
+            <div style="width:${Math.min(100,totalHrs>0?mktHrs/totalHrs*100:0)}%;height:100%;background:${mktHrs/Math.max(totalHrs,1)>0.6?'var(--red)':'var(--amber)'};border-radius:4px"></div>
+          </div>
+          <span style="font-size:11px;font-family:var(--font-mono)">${Math.round(mktHrs)} / ${totalHrs}h</span>
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-top:3px">Hours used for marketing vs. total DC hours</div>
       </div>
     </div>
   </div>
   <div class="card"><div class="card-title">Activities</div>
-  <table class="gtable"><thead><tr><th>Activity</th><th>Count/Active</th><th>Cost</th><th>DC Time</th><th>Expected Leads</th></tr></thead><tbody>`;
+  <table class="gtable"><thead><tr><th>Activity</th><th>Count/Active</th><th>MP Cost</th><th>Cash Cost</th><th>DC Time</th><th>Est. Leads</th></tr></thead><tbody>`;
 
   for(const r of rows){
-    html+=`<tr><td><strong>${r.label}</strong></td><td>`;
+    const act=MARKETING_ACTIVITIES[r.key];
+    const mpCost=act?act.mp:0;
+    // Grey out if adding one more would exceed MP (and it's not already at max)
+    const wouldExceed = mp.remaining < mpCost;
+    html+=`<tr><td><strong>${r.label}</strong><br><span style="font-size:9px;color:var(--cyan)">${mpCost} MP each</span></td><td>`;
     if(r.type==='counter'){
       html+=`<div style="display:flex;align-items:center;gap:6px">
         <button class="btn btn-ghost mkt-ctrl-btn" onclick="setMkt('${r.key}',Math.max(0,(G.locs[selectedLoc].decisions.${r.key}||0)-1));renderTab('marketing')">−</button>
         <span class="mono" style="min-width:24px;text-align:center;font-size:14px">${r.val}</span>
-        <button class="btn btn-ghost mkt-ctrl-btn" onclick="setMkt('${r.key}',Math.min(${r.max},(G.locs[selectedLoc].decisions.${r.key}||0)+1));renderTab('marketing')">+</button>
+        <button class="btn btn-ghost mkt-ctrl-btn" onclick="setMkt('${r.key}',Math.min(${r.max},(G.locs[selectedLoc].decisions.${r.key}||0)+1));renderTab('marketing')" ${wouldExceed?'disabled title="Not enough MP"':''}>+</button>
       </div>`;
     } else {
-      html+=`<button class="btn ${r.val?'btn-success':'btn-ghost'}" onclick="setMkt('${r.key}',!G.locs[selectedLoc].decisions.${r.key});renderTab('marketing')">${r.val?'ON':'OFF'}</button>`;
+      html+=`<button class="btn ${r.val?'btn-success':'btn-ghost'}" onclick="setMkt('${r.key}',!G.locs[selectedLoc].decisions.${r.key});renderTab('marketing')" ${!r.val&&wouldExceed?'disabled title="Not enough MP"':''}>${r.val?'ON ✓':'OFF'}</button>`;
     }
-    html+=`</td><td style="color:var(--amber)">${r.cost}</td><td style="color:var(--red)">${r.time}</td><td style="color:var(--green)">${r.leads}</td></tr>`;
+    html+=`</td><td style="color:var(--cyan);font-size:11px">${mpCost} MP</td><td style="color:var(--amber)">${r.cost}</td><td style="color:var(--muted)">${r.time}</td><td style="color:var(--green)">${r.leads}</td></tr>`;
   }
-  // Social media row
-  html+=`<tr><td><strong>Social Media</strong></td>
-    <td><input type="range" min="0" max="1200" step="100" value="${d.socialBudget}" oninput="setMkt('socialBudget',+this.value);document.getElementById('social-val').textContent='$'+this.value" onchange="renderTab('marketing')" style="width:100px"> <span class="mono" id="social-val">$${d.socialBudget}</span></td>
+  // Social media row — MP costs 1 per $300
+  const smMpCost=Math.ceil((d.socialBudget||0)/300);
+  const smMpColor=smMpCost>0?'var(--cyan)':'var(--muted)';
+  html+=`<tr><td><strong>Social Media</strong><br><span style="font-size:9px;color:var(--cyan)">1 MP per $300</span></td>
+    <td><input type="range" min="0" max="900" step="100" value="${Math.min(d.socialBudget||0,900)}" oninput="setMkt('socialBudget',+this.value);renderTab('marketing')" style="width:90px"> <span class="mono">$${d.socialBudget||0}</span></td>
+    <td style="color:${smMpColor}">${smMpCost} MP</td>
     <td style="color:var(--amber)">Budget above</td>
-    <td style="color:var(--red)">${hasMgr?'0h (mgr)':MARKETING_ACTIVITIES.socialmedia.timeHrs+'h'}</td>
-    <td style="color:var(--green)">Scales with $</td></tr>`;
+    <td style="color:var(--muted)">${hasMgr?'0h (mgr)':MARKETING_ACTIVITIES.socialmedia.timeHrs+'h'}</td>
+    <td style="color:var(--green)">~${d.socialBudget>0?Math.round(Math.sqrt((d.socialBudget||0)/220)*1.0):0} leads</td></tr>`;
   html+=`</tbody></table></div>`;
 
   // Community outreach section
@@ -4743,7 +4801,17 @@ function attachTabListeners(name){}
 //  PLAYER ACTIONS
 // ════════════════════════════════════════════════════════
 function setMkt(key,val){
-  G.locs[selectedLoc].decisions[key]=val;
+  const li=selectedLoc;
+  const d=G.locs[li].decisions;
+  // Temporarily apply change and check if it exceeds MP budget
+  const oldVal=d[key];
+  d[key]=val;
+  const mp=calcMarketingPoints(G,li);
+  if(mp.used>mp.total){
+    d[key]=oldVal; // revert
+    showAlert(`Not enough Marketing Points — ${mp.used-mp.total} over budget (${mp.used}/${mp.total} MP used).\n\nReduce another activity first, or hire a manager/earn certifications to increase your MP.`,'warn');
+    return;
+  }
   renderFooter();
 }
 function setSpeqMkt(id,val){
