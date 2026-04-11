@@ -2295,7 +2295,7 @@ function calcDCHoursAvailable(G, li){
     const s = G.staffPool[id];
     if(!s) continue;
     // Low morale reduces effective DC hours: <30 morale = -20%, <50 = -10%
-    const moraleMult = (s.morale||75)<30 ? 0.80 : (s.morale||75)<50 ? 0.90 : 1.0;
+    const moraleMult = (s.morale||75)<30 ? 0.70 : (s.morale||75)<50 ? 0.80 : (s.morale||75)<70 ? 0.92 : 1.0;
     if(s.isOwner)          totalHrs += Math.round(160 * (G.ownerBurnout ? 0.85 : 1.0) * moraleMult);
     else if(s.role==='associate') totalHrs += Math.round(160 * associateEfficiency(s, G.totalMonths) * moraleMult);
   }
@@ -2881,11 +2881,13 @@ function updateReputation(G, li){
   const loc=G.locs[li];
   // Drift toward 50
   loc.rep += (50-loc.rep)*0.02;
-  // Morale influence — stronger effect; very low morale actively drags rep down
+  // Morale influence — scales with how bad it gets
   const am=avgMorale(G,li);
-  loc.rep += (am-50)*0.08; // was 0.05
-  // Particularly bad morale: extra penalty
-  if(am<25) loc.rep=Math.max(0,loc.rep-0.5);
+  loc.rep += (am-50)*0.12; // was 0.08 — medium morale now meaningfully drags rep
+  // Medium morale zone (30–55): extra slow bleed
+  if(am<55 && am>=30) loc.rep=Math.max(0,loc.rep-0.25);
+  // Particularly bad morale: heavy penalty
+  if(am<30) loc.rep=Math.max(0,loc.rep-0.75);
   // Clinic amenity passive rep bonus (decor/plants/etc give subtle ongoing boost)
   const amenityRepBonus=(G.locs[li].upgrades||[]).reduce((s,id)=>{
     const u=CLINIC_UPGRADES.find(c=>c.id===id);
@@ -5104,7 +5106,12 @@ function fireStaff(id){
   if(!s) return;
   const homeLoc=G.locs.find(l=>l.staff.includes(id));
   const teamSize=homeLoc?homeLoc.staff.filter(x=>G.staffPool[x]&&!G.staffPool[x].isOwner&&x!==id).length:0;
-  const moraleWarning=teamSize>0?`\n\nThe remaining team will take a morale hit (−12) from the sudden departure.`:'';
+  const firingToxic=(s.morale||75)<25;
+  const moraleWarning=teamSize>0
+    ? firingToxic
+      ? `\n\n${s.name} has very low morale. The team may actually feel relieved. (+5 morale boost)`
+      : `\n\nThe remaining team will take a morale hit (−12) from the sudden departure.`
+    : '';
   showConfirm(`Fire ${s.name}?${s.role==='associate'?' They may take patients with them when they leave.':''}${moraleWarning}`,(()=>{
     if(s.role==='associate'){
       const pctLost=randF(0.10,0.20);
@@ -5115,13 +5122,23 @@ function fireStaff(id){
         logEv(G,'neg',`${s.name} left and took ~${Math.round(pctLost*100)}% of patients with them`);
       }
     }
-    // Team morale penalty — losing a colleague hurts
+    // Team morale effect — firing a toxic employee can actually help
     if(homeLoc && teamSize>0){
-      for(const tid of homeLoc.staff){
-        const ts=G.staffPool[tid];
-        if(ts && !ts.isOwner && tid!==id) ts.morale=Math.max(0,(ts.morale||75)-12);
+      if(firingToxic){
+        // Very low morale employee was dragging everyone down — small relief boost
+        for(const tid of homeLoc.staff){
+          const ts=G.staffPool[tid];
+          if(ts && !ts.isOwner && tid!==id) ts.morale=Math.min(100,(ts.morale||75)+5);
+        }
+        logEv(G,'pos',`Team morale improved slightly after ${s.name} was let go (+5 all staff at ${homeLoc.name})`);
+      } else {
+        // Normal firing — losing a colleague hurts
+        for(const tid of homeLoc.staff){
+          const ts=G.staffPool[tid];
+          if(ts && !ts.isOwner && tid!==id) ts.morale=Math.max(0,(ts.morale||75)-12);
+        }
+        logEv(G,'warn',`Team morale dropped after ${s.name} was let go (-12 all staff at ${homeLoc.name})`);
       }
-      logEv(G,'warn',`Team morale dropped after ${s.name} was let go (-12 all staff at ${homeLoc.name})`);
     }
     for(const loc of G.locs) loc.staff=loc.staff.filter(x=>x!==id);
     delete G.staffPool[id];
