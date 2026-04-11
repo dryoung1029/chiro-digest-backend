@@ -623,6 +623,7 @@ input[type=number]:focus{outline:none;border-color:var(--cyan)}
     <h2 id="end-title">Game Over</h2>
     <p id="end-msg"></p>
     <div class="end-stats" id="end-stats"></div>
+    <div id="end-debrief"></div>
     <div id="end-meta"></div>
     <button class="btn btn-primary btn-lg" onclick="showSetup()">Play Again</button>
   </div>
@@ -937,6 +938,14 @@ function newLoc(id, name, tier, tierId){
       overheadBudget: tier.overheadBase||600,
     },
     proj:{rev:0,exp:0,dcHrsUsed:0,dcHrsTotal:160,newPatients:0},
+    // Feature: Fellowship Program (Feature 1A)
+    fellowshipActive: false,
+    // Feature: Flagship Upgrade (Feature 1B)
+    isFlagship: false,
+    // Feature: Crisis Consultant cooldown (Feature 2)
+    crisisConsultCooldown: -99,
+    // Feature: Soft launch ramp-up (Feature 3)
+    softLaunchMonthsLeft: 2,
   };
 }
 
@@ -1004,6 +1013,19 @@ function newGame(doctorName, clinicName, tierId, difficulty){
 
     // VIP Patients
     vipEventsFired: [],
+
+    // Feature 5: Insurance Rate Negotiation
+    networkRateBonus: {},
+
+    // Feature 6: Post-game debrief tracking
+    peakPatients: 0,
+    peakMonth: 0,
+    lowestMorale: 100,
+    lowestMoraleMonth: 0,
+    totalFirings: 0,
+
+    // Feature 8: Active competitor threats
+    competitors: [],
   };
 
   // Owner is always at location 0
@@ -1012,8 +1034,40 @@ function newGame(doctorName, clinicName, tierId, difficulty){
   G.locs[0].staff.push(ownerId);
   G.nextStaffId=1;
 
+  // First location has no soft launch (Feature 3)
+  G.locs[0].softLaunchMonthsLeft = 0;
+
   logEv(G,'info',`Starting location: ${tier.name} — ${tier.rooms} rooms, $${fmtN(tier.rent)}/mo rent`);
   logEv(G,'info',`Welcome, Dr. ${doctorName}! Your practice is open. Time to build something great.`);
+
+  // Feature 7: Hard mode — inherit a struggling clinic
+  if(difficulty === 'hard'){
+    const loc0 = G.locs[0];
+    loc0.patients.cash = 22;
+    loc0.patients.insured = 18;
+    loc0.rep = 42;
+    const chiroRoom = loc0.rooms.find(r => r.type === 'chiro');
+    if(chiroRoom){
+      chiroRoom.equipped = true;
+      loc0.equipment.push({
+        name: 'Inherited Adjusting Table',
+        condition: 55, age: 18, totalMissed: 3,
+        lastMaintained: -6, maintainedThisMonth: false
+      });
+    }
+    const fdId = 'staff_inherited_fd';
+    G.staffPool[fdId] = {
+      id: fdId, name: 'Alex (Inherited)', role: 'frontdesk',
+      salary: 2800, morale: 38, hiredMonth: -6,
+      traits: [], isOwner: false, locId: 0,
+    };
+    loc0.staff.push(fdId);
+    G.loans.push({
+      id: 'loan_inherited', amount: 18000, remaining: 18000,
+      monthlyPayment: 500, rate: 0.08, name: 'Practice Acquisition Loan'
+    });
+    logEv(G,'warn','You\'ve taken over a struggling practice. Rep is low, equipment is worn, and the front desk staff is demoralized. Turn it around.');
+  }
 }
 
 // ════════════════════════════════════════════════════════
@@ -2314,12 +2368,15 @@ function calcDCHoursAvailable(G, li){
 function calcMarketingPoints(G, li){
   const loc = G.locs[li];
   const d   = loc.decisions;
-  const hasMgr = loc.staff.some(id=>G.staffPool[id]?.role==='manager');
+  const mgrStaff = loc.staff.map(id=>G.staffPool[id]).find(s=>s&&s.role==='manager');
+  const hasMgr = !!mgrStaff;
   const base = (BASE_MP[G.difficulty]||4) + (hasMgr ? 1 : 0);
   // Cert bonuses
   const certs = G.certs||[];
   const certBonus = (certs.includes('pediatric')?1:0) + (certs.includes('sports_chiro')?1:0);
-  const total = base + certBonus;
+  // Senior manager bonus: +1 MP after 18 months tenure
+  const seniorMgrBonus = (mgrStaff && (G.totalMonths - (mgrStaff.hiredMonth||0)) >= 18) ? 1 : 0;
+  const total = base + certBonus + seniorMgrBonus; // seniorMgrBonus: +1 MP for manager with ≥18mo tenure
   // Count MP in use
   let used = 0;
   used += (d.screening||0) * MARKETING_ACTIVITIES.screening.mp;
@@ -2361,7 +2418,11 @@ function calcFDSatisfaction(G, li){
   // Clinic amenities add up to +30 pts
   const amenityBonus = calcAmenityScore(G,li) * 0.30;
 
-  return clamp(Math.round(repBase + fdBase + fdMoraleShift + amenityBonus), 0, 100);
+  // Tenure bonus: experienced FD (+5 after 12 months)
+  const hasTenuredFD = fdStaff.some(s => (G.totalMonths - (s.hiredMonth||0)) >= 12);
+  const tenureBonus = hasTenuredFD ? 5 : 0;
+
+  return clamp(Math.round(repBase + fdBase + fdMoraleShift + amenityBonus + tenureBonus), 0, 100);
 }
 
 function calcMassageCapacity(G, li){
@@ -2438,6 +2499,8 @@ function calcMarketingLeads(G, li){
   }
   // bonus leads from MD referrals etc
   if(loc.bonusLeads>0){leads+=loc.bonusLeads; loc.bonusLeads=Math.max(0,loc.bonusLeads-4);}
+  // Feature 1A: Fellowship Program adds passive leads
+  if(loc.fellowshipActive) leads += 3;
   return Math.max(0, Math.round(leads));
 }
 
@@ -2450,6 +2513,9 @@ function calcPatientFlow(G, li){
 
   // ── Cash-pay new patients (from marketing) ──
   let newCash = calcMarketingLeads(G, li);
+
+  // Feature 3: Soft launch — new locations ramp up over 2 months
+  if((loc.softLaunchMonthsLeft||0) > 0) newCash *= 0.5;
 
   // Seasonal variation (Jan boom → holiday quiet)
   newCash *= SEASONAL_FACTORS[G.month-1];
@@ -2515,6 +2581,8 @@ function calcPatientFlow(G, li){
       const totalPenalty=Math.min(0.60, permComps*penaltyPer);
       newReferrals*=(1-totalPenalty);
     }
+    // Feature 3: Soft launch — insurance referrals halved during ramp-up
+    if((loc.softLaunchMonthsLeft||0) > 0) newReferrals *= 0.5;
 
     // Cap: can't exceed community pool total enrolled
     const headroom=Math.max(0,pool-enrolled);
@@ -2707,9 +2775,11 @@ function calcInsRevenue(G, li){
     const wellFromNet   = Math.round(wellnessIns*fraction);
     const perFromNet    = Math.round(periodicIns*fraction);
     let bonusPts = G.majorEmployerMonths>0 && G.majorEmployerNetwork===netId ? 30 : 0;
-    rev += (activeFromNet+bonusPts)*VISITS_ACTIVE*net.rpv
+    // Feature 5: Apply negotiated rate bonus
+    const rateBonus = 1 + ((G.networkRateBonus||{})[netId]||0);
+    rev += ((activeFromNet+bonusPts)*VISITS_ACTIVE*net.rpv
          + wellFromNet*VISITS_WELLNESS*net.rpv
-         + Math.round(perFromNet*VISITS_PERIODIC)*net.rpv;
+         + Math.round(perFromNet*VISITS_PERIODIC)*net.rpv) * rateBonus;
   }
   if(G.recessionMonths>0) rev*=0.85;
   // Feature 5: During billing audit, revenue goes into queue
@@ -2845,29 +2915,61 @@ function calcGlobalExpenses(G){
 
 function updateMorale(G, li){
   const loc = G.locs[li];
+  const total=loc.patients.cash+loc.patients.insured;
+  const cap=calcCapacity(G,li).patientsMax;
+  const hasFD=loc.staff.some(id=>G.staffPool[id]?.role==='frontdesk');
+
+  // Feature 9: Track whether we already logged certain morale events this month
+  const _loggedOverwork = {done:false};
+  const _loggedUnderstaffed = {done:false};
+  const _loggedOverhead = {done:false};
+
   for(const id of loc.staff){
     const s = G.staffPool[id];
     if(!s) continue;
-    const market = STAFF_TYPES[s.role].salary;
+    const oldMorale = s.morale;
+    const market = STAFF_TYPES[s.role]?.salary||s.salary||1;
     const ratio = s.salary / market;
     if(ratio>=1.1) s.morale=Math.min(100,s.morale+2);
     else if(ratio<0.9) s.morale=Math.max(0,s.morale-3);
-    const total=loc.patients.cash+loc.patients.insured;
-    const cap=calcCapacity(G,li).patientsMax;
     if(cap>0){
       const load=total/cap;
-      if(load>0.95) s.morale=Math.max(0,s.morale-4);
+      // Feature 9: Overwork/capacity penalty logging
+      if(load>0.95){
+        s.morale=Math.max(0,s.morale-4);
+        if(!_loggedOverwork.done && !s.isOwner){
+          logEv(G,'warn',`[${loc.name}] Staff feeling overworked — high patient volume taking a toll (−4 morale)`);
+          _loggedOverwork.done=true;
+        }
+      }
       if(load<0.4)  s.morale=Math.max(0,s.morale-2);
     }
     if(loc.rep>70) s.morale=Math.min(100,s.morale+1);
     if(loc.rep<40) s.morale=Math.max(0,s.morale-2);
+    // Feature 9: Understaffed penalty logging
+    if(!s.isOwner && !hasFD && total>5 && !_loggedUnderstaffed.done){
+      logEv(G,'warn',`[${loc.name}] No front desk staff — team morale suffering from the extra workload`);
+      _loggedUnderstaffed.done=true;
+    }
     // Overhead underfunding penalty
     if(!s.isOwner){
       const oRatio=calcOverheadRatio(G,li);
       const moralePenalty=oRatio<0.50?-15:oRatio<0.75?-8:oRatio<1.0?-3:0;
-      if(moralePenalty) s.morale=Math.max(0,s.morale+moralePenalty);
+      if(moralePenalty){
+        s.morale=Math.max(0,s.morale+moralePenalty);
+        // Feature 9: Overhead penalty logging
+        if(!_loggedOverhead.done && moralePenalty<=-8){
+          logEv(G,'warn',`[${loc.name}] Overhead critically underfunded — staff morale taking a hit (${moralePenalty} morale/mo)`);
+          _loggedOverhead.done=true;
+        }
+      }
     }
     s.morale=clamp(s.morale,0,100);
+
+    // Feature 9: Natural morale decay threshold crossing
+    if(!s.isOwner && s.morale < 50 && oldMorale >= 50){
+      logEv(G,'warn',`[${loc.name}] ${s.name}'s morale has dropped below 50 — consider a morale action`);
+    }
 
     // Feature 3: Track consecutive low-morale months
     if(!s.isOwner){
@@ -2883,11 +2985,15 @@ function updateReputation(G, li){
   loc.rep += (50-loc.rep)*0.02;
   // Morale influence — scales with how bad it gets
   const am=avgMorale(G,li);
-  loc.rep += (am-50)*0.12; // was 0.08 — medium morale now meaningfully drags rep
-  // Medium morale zone (30–45): extra slow bleed — only triggers when genuinely poor
-  if(am<45 && am>=30) loc.rep=Math.max(0,loc.rep-0.25);
-  // Particularly bad morale: heavy penalty
-  if(am<30) loc.rep=Math.max(0,loc.rep-0.75);
+  // Feature 2: Crisis Consultant stabilizes morale-driven rep bleed
+  const consultActive = (loc.crisisConsultCooldown||0) > G.totalMonths;
+  if(!consultActive){
+    loc.rep += (am-50)*0.12; // was 0.08 — medium morale now meaningfully drags rep
+    // Medium morale zone (30–45): extra slow bleed — only triggers when genuinely poor
+    if(am<45 && am>=30) loc.rep=Math.max(0,loc.rep-0.25);
+    // Particularly bad morale: heavy penalty
+    if(am<30) loc.rep=Math.max(0,loc.rep-0.75);
+  }
   // Clinic amenity passive rep bonus (decor/plants/etc give subtle ongoing boost)
   const amenityRepBonus=(G.locs[li].upgrades||[]).reduce((s,id)=>{
     const u=CLINIC_UPGRADES.find(c=>c.id===id);
@@ -3092,6 +3198,32 @@ function processInsuranceApprovals(G){
       G.insApprovedMonth[a.networkId]=G.totalMonths;
       const net=INSURANCE_NETWORKS.find(n=>n.id===a.networkId);
       logEv(G,'pos',`Approved for ${net.name}! Expect ~${net.ppm*(net.govcare?2:1)} new patients/month`);
+      // Feature 5: Insurance Rate Negotiation event
+      const netId = a.networkId;
+      eventQueue.push({ev:{
+        id:'ins_negotiate',
+        title:'Insurance Rate Negotiation',
+        msg:`${net.name} has approved your credentialing. You can accept their standard reimbursement rate, or push back for better terms.`,
+        choices:()=>[
+          {label:'Accept standard rate', desc:'Safe and quick — start billing immediately'},
+          {label:'Negotiate for better terms', desc:'50% chance: +8% reimbursement permanently. 50% chance: 1-month delay.'},
+        ],
+        effect:(G,li,ctx)=>{
+          if(ctx.choice===1){
+            if(Math.random()<0.5){
+              if(!G.networkRateBonus) G.networkRateBonus={};
+              G.networkRateBonus[netId]=0.08;
+              logEv(G,'pos',`Negotiated +8% reimbursement from ${net.name}`);
+            } else {
+              logEv(G,'warn',`${net.name} pushed back — approval delayed 1 month`);
+              const app=G.insApps.find(a2=>a2.networkId===netId);
+              if(app) app.monthsLeft=(app.monthsLeft||0)+1;
+              G.insApproved=G.insApproved.filter(id=>id!==netId);
+              G.insApps.push({networkId:netId, approveAt:G.totalMonths+1});
+            }
+          }
+        },
+      }, li:0, ctx:{}});
     }
   }
   G.insApps=G.insApps.filter(a=>G.totalMonths<a.approveAt);
@@ -3371,6 +3503,15 @@ function _advanceMonthCore(){
     generateReviews(G,li);
     if(loc.competitorMonths>0) loc.competitorMonths--;
 
+    // Feature 1A: Fellowship Program — monthly rep boost
+    if(loc.fellowshipActive && (G.certs||[]).length > 0){
+      G.cash -= 2500;
+      loc.rep = Math.min(100, loc.rep + 0.4);
+    }
+
+    // Feature 3: Soft launch countdown
+    if((loc.softLaunchMonthsLeft||0) > 0) loc.softLaunchMonthsLeft--;
+
     // Feature 3: Check for staff quit from sustained low morale
     for(const staffId of [...loc.staff]){
       const s=G.staffPool[staffId];
@@ -3570,6 +3711,47 @@ function _advanceMonthCore(){
       }
     }
     G.outreach=G.outreach.filter((_,i)=>!fired[i]);
+  }
+
+  // Feature 6: Track peak patients and lowest morale
+  {
+    const curPts = G.locs.reduce((s,l)=>s+l.patients.cash+l.patients.insured,0);
+    if(curPts > (G.peakPatients||0)){ G.peakPatients=curPts; G.peakMonth=G.totalMonths; }
+    let minMorale = 100;
+    for(const loc of G.locs){
+      const am = avgMorale(G, G.locs.indexOf(loc));
+      if(am < minMorale) minMorale = am;
+    }
+    if(minMorale < (G.lowestMorale||100)){ G.lowestMorale=minMorale; G.lowestMoraleMonth=G.totalMonths; }
+  }
+
+  // Feature 8: Active competitor threats
+  if(featureUnlocked('competitor_dynamics') && G.totalMonths > 12){
+    if((G.competitors||[]).filter(c=>c.active).length === 0 && Math.random() < 0.05){
+      const targetLi = Math.floor(Math.random() * G.locs.length);
+      const compName = ['Peak Performance Chiro','SpineRight Clinic','AlignWell Centers','BackCare Associates'][Math.floor(Math.random()*4)];
+      if(!G.competitors) G.competitors = [];
+      G.competitors.push({ name: compName, openedMonth: G.totalMonths, targetLocIdx: targetLi, active: true, monthsActive: 0 });
+      logEv(G, 'neg', `⚠ Competitor "${compName}" has opened near your ${G.locs[targetLi].name}! Expect reduced new patient flow for 2-3 months.`);
+    }
+    for(const comp of (G.competitors||[])){
+      if(!comp.active) continue;
+      comp.monthsActive++;
+      const loc = G.locs[comp.targetLocIdx];
+      if(loc){
+        const poachRate = 0.015 + Math.random() * 0.015;
+        const lostCash = Math.floor(loc.patients.cash * poachRate);
+        const lostIns = Math.floor(loc.patients.insured * poachRate);
+        loc.patients.cash = Math.max(0, loc.patients.cash - lostCash);
+        loc.patients.insured = Math.max(0, loc.patients.insured - lostIns);
+        if(lostCash + lostIns > 0) logEv(G, 'neg', `${comp.name}: poached ${lostCash + lostIns} patients from ${loc.name}`);
+        loc.rep = Math.max(0, loc.rep - 0.3);
+      }
+      if(comp.monthsActive >= 4 + Math.floor(Math.random() * 3)){
+        comp.active = false;
+        logEv(G, 'pos', `${comp.name} has closed down — competition eliminated!`);
+      }
+    }
   }
 
   // Global expenses
@@ -3929,7 +4111,7 @@ function renderLocSwitcher(){
   el.style.display='flex';
   el.style.cssText='display:flex;gap:4px;padding:4px 8px;background:var(--s2);border-bottom:1px solid var(--border);align-items:center;flex-shrink:0';
   el.innerHTML='<span style="font-size:10px;color:var(--muted);margin-right:4px;text-transform:uppercase;letter-spacing:.5px">Location:</span>'
-    +G.locs.map((l,i)=>`<button onclick="selectedLoc=${i};render()" style="background:${i===selectedLoc?'var(--cyan2)':'var(--s3)'};border:1px solid var(--border2);color:${i===selectedLoc?'#fff':'var(--muted)'};padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px">${l.name}</button>`).join('');
+    +G.locs.map((l,i)=>`<button onclick="selectedLoc=${i};render()" style="background:${i===selectedLoc?'var(--cyan2)':'var(--s3)'};border:1px solid var(--border2);color:${i===selectedLoc?'#fff':'var(--muted)'};padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px">${l.name}${(l.softLaunchMonthsLeft||0)>0?' 🚧':''}</button>`).join('');
 }
 
 function renderHeader(){
@@ -4068,6 +4250,11 @@ function renderSidebar(){
     const shrinkage=(G.poolShrinkage||{})[netId]||0;
     const effectivePool=Math.max(10,origPool-shrinkage);
     if(effectivePool<origPool*0.20) warns.push({t:'warn',m:`${net.name} market saturated (${Math.round(effectivePool/origPool*100)}% pool remaining)`});
+  }
+  // Feature 8: Active competitor threats
+  const activeComps=(G.competitors||[]).filter(c=>c.active&&c.targetLocIdx===li);
+  for(const comp of activeComps){
+    warns.push({t:'danger',m:`⚔ ${comp.name} is competing nearby — poaching patients!`});
   }
   if(warns.length){
     html+=`<div class="sb-section"><div class="sb-title">⚠ Warnings</div>`;
@@ -4220,6 +4407,7 @@ function renderOverview(){
   const massCap=calcMassageCapacity(G,li);
   const totalMassage=(loc.patients.massageCash||0)+(loc.patients.massageInsured||0);
   return `
+  ${(loc.softLaunchMonthsLeft||0)>0?`<div class="warn-item" style="background:var(--s2);border:1px solid var(--amber);color:var(--amber);margin-bottom:8px;border-radius:6px;padding:8px">🚧 SOFT LAUNCH — ${loc.softLaunchMonthsLeft} month(s) remaining · New patient flow reduced 50% during ramp-up</div>`:''}
   ${(()=>{
     const fds=calcFDSatisfaction(G,li);
     const fdsColor=fds>=70?'var(--green)':fds>=45?'var(--amber)':'var(--red)';
@@ -4523,7 +4711,9 @@ function renderRooms(){
   let staffRows=staffObjs.map(s=>{
     const info=STAFF_TYPES[s.role]||{label:'Owner DC'};
     const moraleCls=s.morale>60?'bar-green':s.morale>30?'bar-amber':'bar-red';
-    const roleLbl=s.isOwner?`<span class="badge badge-cyan">You</span> ${info.label||'Owner DC'}`:info.label;
+    const tenure = G.totalMonths - (s.hiredMonth||0);
+    const veteranBadge = (!s.isOwner && tenure >= 12) ? ' <span class="badge badge-cyan" title="Veteran staff — 12+ months tenure">⭐ Veteran</span>' : '';
+    const roleLbl=s.isOwner?`<span class="badge badge-cyan">You</span> ${info.label||'Owner DC'}`:info.label+veteranBadge;
     return `<tr>
       <td>${s.name}</td>
       <td>${roleLbl}</td>
@@ -4616,6 +4806,19 @@ function renderRooms(){
       }
       html+=`</div>`;
       if(onCooldown) html+=`<div style="font-size:10px;color:var(--amber);margin-top:6px">⏳ Used this month — available next month</div>`;
+      // Feature 2: Crisis Consultant button
+      const amNow = avgMorale(G, li);
+      const ccCooldown = (loc.crisisConsultCooldown||0) > G.totalMonths;
+      const ccAvail = amNow < 45 && !ccCooldown;
+      const ccCooldownLeft = ccCooldown ? (loc.crisisConsultCooldown - G.totalMonths) : 0;
+      html+=`<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">
+        <button class="btn ${ccAvail&&G.cash>=5000?'btn-danger':'btn-ghost'}" style="width:100%;font-size:11px;padding:7px;text-align:left"
+          onclick="crisisConsultant(${li})" ${!ccAvail||G.cash<5000?'disabled':''}>
+          <span style="font-weight:700">🚨 Crisis Consultant</span>
+          <span style="font-size:10px;color:var(--muted);margin-left:6px">$5,000 · All staff +20 morale · 6mo cooldown</span>
+        </button>
+        ${ccCooldown?`<div style="font-size:10px;color:var(--amber);margin-top:4px">⏳ Cooldown: ${ccCooldownLeft} month(s) remaining</div>`:amNow>=45?`<div style="font-size:10px;color:var(--muted);margin-top:4px">Available when avg morale drops below 45% (currently ${Math.round(amNow)}%)</div>`:''}
+      </div>`;
       return html;
     })()}
   </div>
@@ -4677,7 +4880,58 @@ function renderRooms(){
     }
     certHtml+=`</div></div>`;
     return certHtml;
-  })()}`;
+  })()}
+  <div class="card">
+    <div class="card-title">🌱 Growth Programs</div>
+    ${(()=>{
+      const hasCerts = (G.certs||[]).length > 0;
+      const fellowshipActive = loc.fellowshipActive;
+      const totalPtsLoc = loc.patients.cash + loc.patients.insured;
+      const canFlagship = !loc.isFlagship && totalPtsLoc >= 200 && G.cash >= 200000;
+      const nextTier = loc.tier === 'small' ? LOCATION_TIERS.find(t=>t.id==='medium') : loc.tier === 'medium' ? LOCATION_TIERS.find(t=>t.id==='large') : null;
+      let html = '';
+
+      // Fellowship Program
+      html += `<div style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:12px">Research & Fellowship Program</div>
+            <div style="font-size:10px;color:var(--muted);margin-top:2px">$2,500/mo · +3 passive leads/mo · +0.4 rep/mo</div>
+            <div style="font-size:10px;color:${hasCerts?'var(--cyan)':'var(--amber)'};margin-top:2px">${hasCerts?'✓ Cert requirement met':'⚠ Requires at least 1 DC certification'}</div>
+          </div>
+          <button class="btn ${fellowshipActive?'btn-success':'btn-primary'}" style="font-size:10px;padding:4px 10px;flex-shrink:0"
+            onclick="toggleFellowship(${li})" ${!hasCerts&&!fellowshipActive?'disabled':''}>
+            ${fellowshipActive?'ACTIVE — Deactivate':'Activate'}
+          </button>
+        </div>
+      </div>`;
+
+      // Flagship Upgrade
+      if(!loc.isFlagship && nextTier){
+        html += `<div style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:10px">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start">
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:12px">Flagship Upgrade — ${loc.tierObj.name} → ${nextTier.name}</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:2px">One-time $180,000 · +${nextTier.rooms - loc.tierObj.rooms} rooms · Better retention & overhead</div>
+              <div style="font-size:10px;color:${canFlagship?'var(--cyan)':'var(--amber)'};margin-top:2px">
+                ${totalPtsLoc<200?`Need 200 patients at this location (have ${totalPtsLoc})`:''}
+                ${G.cash<200000?`Need $200,000 cash (have $${fmtN(G.cash)})`:''}
+                ${canFlagship?'✓ Eligible for flagship upgrade':''}
+              </div>
+            </div>
+            <button class="btn btn-cyan" style="font-size:10px;padding:4px 10px;flex-shrink:0"
+              onclick="buyFlagship(${li})" ${!canFlagship?'disabled':''}>
+              $180,000
+            </button>
+          </div>
+        </div>`;
+      } else if(loc.isFlagship){
+        html += `<div style="font-size:11px;color:var(--green);margin-top:4px">🏆 This is a Flagship location — fully upgraded!</div>`;
+      }
+
+      return html;
+    })()}
+  </div>`;
 }
 
 // ─── INSURANCE TAB ───
@@ -5060,6 +5314,23 @@ function hireStaff(role,li){
   logEv(G,'info',`Hired ${name} as ${info.label} — $${fmtN(info.salary)}/mo`);
   renderTab('rooms'); renderSidebar();
 }
+// ── Crisis Consultant (Feature 2) ──
+function crisisConsultant(li){
+  const loc = G.locs[li];
+  const am = avgMorale(G, li);
+  if(am >= 45){ showAlert('Crisis Consultant is only available when avg morale is below 45.','warn'); return; }
+  if((loc.crisisConsultCooldown||0) > G.totalMonths){ showAlert(`Crisis Consultant on cooldown — available in ${loc.crisisConsultCooldown - G.totalMonths} month(s).`,'warn'); return; }
+  if(G.cash < 5000){ showAlert('Need $5,000 for the Crisis Consultant.','warn'); return; }
+  showConfirm('Hire a Crisis Consultant for $5,000?\n\nAll staff receive +20 morale. Also stabilizes rep bleed from low morale for 6 months.', ()=>{
+    G.cash -= 5000;
+    const staff = loc.staff.map(id=>G.staffPool[id]).filter(s=>s&&!s.isOwner);
+    for(const s of staff) s.morale = Math.min(100, (s.morale||75) + 20);
+    loc.crisisConsultCooldown = G.totalMonths + 6;
+    logEv(G, 'pos', `[${loc.name}] Crisis Consultant hired — all staff morale +20, rep stabilized for 6 months ($5,000)`);
+    renderTab('rooms'); renderSidebar();
+  }, 'warn');
+}
+
 // ── Team Morale Actions ──
 function teamAction(type, li){
   const loc=G.locs[li];
@@ -5142,6 +5413,8 @@ function fireStaff(id){
     }
     for(const loc of G.locs) loc.staff=loc.staff.filter(x=>x!==id);
     delete G.staffPool[id];
+    // Feature 6: Track total firings for debrief
+    G.totalFirings = (G.totalFirings||0) + 1;
     logEv(G,'info',`${s.name} has been let go`);
     renderTab('rooms'); renderSidebar();
   }),'warn');
@@ -5232,6 +5505,44 @@ function openLoanModal(productId){
     updatePreview();
   },60);
 }
+// ── Fellowship Program (Feature 1A) ──
+function toggleFellowship(li){
+  const loc = G.locs[li];
+  if(!loc.fellowshipActive && (G.certs||[]).length === 0){
+    showAlert('Fellowship Program requires at least one DC certification.','warn');
+    return;
+  }
+  loc.fellowshipActive = !loc.fellowshipActive;
+  logEv(G, loc.fellowshipActive?'pos':'info', `[${loc.name}] Research & Fellowship Program ${loc.fellowshipActive?'activated ($2,500/mo — +3 leads, +0.4 rep/mo)':'deactivated'}`);
+  renderTab('rooms');
+}
+
+// ── Flagship Upgrade (Feature 1B) ──
+function buyFlagship(li){
+  const loc = G.locs[li];
+  const nextTier = loc.tier==='small' ? LOCATION_TIERS.find(t=>t.id==='medium') : loc.tier==='medium' ? LOCATION_TIERS.find(t=>t.id==='large') : null;
+  if(!nextTier){ showAlert('This location is already at maximum tier.','warn'); return; }
+  const totalPtsLoc = loc.patients.cash + loc.patients.insured;
+  if(totalPtsLoc < 200){ showAlert(`Need 200 patients at this location to qualify (currently ${totalPtsLoc}).`,'warn'); return; }
+  if(G.cash < 200000){ showAlert(`Need $200,000 cash (currently $${fmtN(G.cash)}).`,'warn'); return; }
+  if(loc.isFlagship){ showAlert('Already a Flagship location.','warn'); return; }
+  showConfirm(`Flagship Upgrade: ${loc.tierObj.name} → ${nextTier.name}\n\nCost: $180,000\n\nAdds ${nextTier.rooms - loc.tierObj.rooms} rooms, increases rent and overhead, improves retention.\n\nThis is a permanent upgrade and cannot be undone.`, ()=>{
+    G.cash -= 180000;
+    // Add new rooms
+    const curRoomCount = loc.rooms.length;
+    for(let i = curRoomCount; i < nextTier.rooms; i++){
+      loc.rooms.push({id:i, type:'chiro', equipped:false});
+    }
+    loc.tierObj = nextTier;
+    loc.tier = nextTier.id;
+    loc.rent = nextTier.rent;
+    loc.decisions.overheadBudget = Math.max(loc.decisions.overheadBudget||0, nextTier.overheadBase||1000);
+    loc.isFlagship = true;
+    logEv(G, 'pos', `[${loc.name}] Flagship Upgrade complete! ${loc.tierObj.name} — ${nextTier.rooms} rooms, $${fmtN(nextTier.rent)}/mo rent ($180,000 invested)`);
+    renderTab('rooms'); renderSidebar();
+  }, 'pos');
+}
+
 function openLocation(tierId){
   const tier=LOCATION_TIERS.find(t=>t.id===tierId);
   if(!tier)return;
@@ -5246,9 +5557,11 @@ function openLocation(tierId){
       // Deduct expansion cost from cash (loc 2 = $90k, loc 3 = $180k)
       const expansionCost=newIdx===1?90000:180000;
       G.cash-=expansionCost;
-      G.locs.push(newLoc(newIdx, name, tier, tierId));
+      const newLocObj=newLoc(newIdx, name, tier, tierId);
+      // Feature 3: New locations get a 2-month soft launch (softLaunchMonthsLeft already set to 2 in newLoc)
+      G.locs.push(newLocObj);
       logEv(G,'warn',`Expansion cost: -$${fmtN(expansionCost)} for ${name} build-out and deposits.`);
-      logEv(G,'pos',`New location opened: ${name} (${tier.name}, $${fmtN(tier.rent)}/mo) — Hire an Associate DC and buy tables to activate!`);
+      logEv(G,'pos',`New location opened: ${name} (${tier.name}, $${fmtN(tier.rent)}/mo) — Soft launch: 50% patient flow for first 2 months.`);
       selectedLoc=newIdx;
       render();
     }
@@ -5571,6 +5884,35 @@ function showEndScreen(){
     <div class="stat-box"><div class="stat-val">${totalPts}</div><div class="stat-lbl">Patients</div></div>
     <div class="stat-box"><div class="stat-val">${Math.round(G.locs[0].rep)}</div><div class="stat-lbl">Reputation</div></div>
     <div class="stat-box"><div class="stat-val">Y${G.year}</div><div class="stat-lbl">Years Played</div></div>`;
+
+  // Feature 6: Practice Report debrief
+  const peakPts = G.peakPatients||totalPts;
+  const peakMo = G.peakMonth||G.totalMonths;
+  const peakYr = Math.floor(peakMo/12)+1;
+  const peakMoName = MONTHS[peakMo%12];
+  const firings = G.totalFirings||0;
+  const lowestMorale = Math.round(G.lowestMorale||100);
+  const lowestMoMo = G.lowestMoraleMonth||0;
+  let narrative = `Your practice peaked at ${peakPts} patients in ${peakMoName} Y${peakYr}. `;
+  if(G.gameOverReason==='bankrupt') narrative += `Finances collapsed in month ${G.totalMonths}. `;
+  else if(G.gameOverReason==='timeout') narrative += `You ran out of time with rep at ${Math.round(G.locs[0].rep)}%. `;
+  else if(G.gameWon) narrative += `You built a chiropractic empire in just ${G.totalMonths} months. `;
+  if(firings>0) narrative += `You let go of ${firings} staff member${firings!==1?'s':''} along the way. `;
+  else narrative += 'You kept every staff member you hired. ';
+  const debriefEl=document.getElementById('end-debrief');
+  if(debriefEl){
+    debriefEl.innerHTML=`
+    <div style="margin-top:16px;background:var(--s2);border:1px solid var(--border2);border-radius:8px;padding:14px">
+      <div style="font-size:12px;font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Practice Report</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">
+        <div style="text-align:center"><div style="font-size:18px;font-weight:700;color:var(--text)">${peakPts}</div><div style="font-size:10px;color:var(--muted)">Peak Patients</div></div>
+        <div style="text-align:center"><div style="font-size:18px;font-weight:700;color:${lowestMorale<40?'var(--red)':lowestMorale<60?'var(--amber)':'var(--green)'}">${lowestMorale}%</div><div style="font-size:10px;color:var(--muted)">Lowest Morale</div></div>
+        <div style="text-align:center"><div style="font-size:18px;font-weight:700;color:var(--text)">${firings}</div><div style="font-size:10px;color:var(--muted)">Staff Fired</div></div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);line-height:1.5;font-style:italic">${narrative}</div>
+    </div>`;
+  }
+
   const achCount=META.totalAchievements.length;
   const endMetaEl=document.getElementById('end-meta');
   if(endMetaEl) endMetaEl.innerHTML=`<div style="margin-top:12px;font-size:11px;color:var(--muted);text-align:center">
@@ -5637,9 +5979,11 @@ function buildSetupUI(){
           <div class="diff-cash">???</div>
         </div><div style="font-size:10px;color:var(--amber);text-align:center;margin-top:2px">\uD83D\uDD12 Beat Normal mode to unlock</div>`;
       }
+      const hardFlavorText = d.id==='hard'?`<div style="font-size:9px;color:var(--amber);margin-top:3px">Inherit a struggling clinic. Turn it around.</div>`:'';
       return `<div class="diff-card ${d.id===selectedDiff?'selected':''}" onclick="selectDiff('${d.id}')">
         <div class="diff-name">${d.label}</div>
         <div class="diff-cash">$${fmtN(d.cash)}</div>
+        ${hardFlavorText}
       </div>`;
     }).join('');
 
