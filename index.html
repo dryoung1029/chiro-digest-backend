@@ -808,11 +808,17 @@ const INSURANCE_NETWORKS = [
 
 const STAFF_TYPES = {
   owner:     {label:'Owner DC',          salary:0,    annualLicense:0,   roomNeeded:'chiro',   max:1},
-  frontdesk: {label:'Front Desk',        salary:2000, annualLicense:0,   roomNeeded:null,      max:2},
+  frontdesk: {label:'Front Desk',        salary:2000, annualLicense:0,   roomNeeded:null,      max:2,
+              satisfNote:'Boosts patient satisfaction, rep, and retention. 2 FD = full experience team.'},
   assistant: {label:'Chiro Assistant',   salary:300,  annualLicense:300, roomNeeded:null,      max:null, unlockPatients:15,
+              patientsPerSlot:20,
               unlockDesc:'Unlocks at 15 active patients — assists DC, boosts visit throughput'},
-  massage:   {label:'Massage Therapist', salary:3000, annualLicense:400, roomNeeded:'massage', max:null},
+  massage:   {label:'Massage Therapist', salary:3000, annualLicense:400, roomNeeded:'massage', max:null,
+              patientsPerSlot:25,
+              slotDesc:'1 per 25 active patients (+ equipped massage room required)'},
   associate: {label:'Associate DC',      salary:7500, annualLicense:0,   roomNeeded:'chiro',   max:null, unlockPatients:30,
+              patientsPerSlot:50,
+              slotDesc:'1 per 50 active patients (+ equipped chiro room required)',
               unlockDesc:'Unlocks at 30 active patients — doubles your chiro capacity'},
   manager:   {label:'Office Manager',    salary:4500, annualLicense:0,   roomNeeded:null,      max:1,    unlockPatients:50,
               unlockDesc:'Unlocks at 50 active patients — reduces your marketing time costs by half'},
@@ -2301,6 +2307,22 @@ function calcMarketingPoints(G, li){
   return {total, used, remaining: Math.max(0, total - used)};
 }
 
+// ── Front Desk Satisfaction Score (0–100) ──
+// Drives rep drift, review quality, and retention bonus.
+// 0 FD = understaffed experience; 1 FD = standard; 2 FD = white-glove.
+// FD morale amplifies or dampens the effect.
+function calcFDSatisfaction(G, li){
+  const loc = G.locs[li];
+  const fdStaff = loc.staff.map(id=>G.staffPool[id]).filter(s=>s&&s.role==='frontdesk');
+  const fdCount = fdStaff.length;
+  if(fdCount===0) return 20; // poor — no one managing phones/check-in
+  const avgFDMorale = fdStaff.reduce((s,f)=>s+(f.morale||75),0) / fdCount;
+  const base = fdCount>=2 ? 80 : 60; // 2 FD = great baseline; 1 FD = adequate
+  // Morale shifts score ±20 from baseline
+  const moraleShift = (avgFDMorale - 75) * (20/75);
+  return clamp(Math.round(base + moraleShift), 0, 100);
+}
+
 function calcMassageCapacity(G, li){
   // Massage room/therapist sharing rules:
   // - 1 therapist per room = 8 patients/day
@@ -2482,7 +2504,10 @@ function calcPatientFlow(G, li){
   // Base retention (after graduation): additional rep/tier/price effects
   const basChurn = 0.03 + (loc.tierObj?.retention<0 ? 0.02 : 0);
   const repChurn = loc.rep<50 ? 0.02 : 0;
-  let retFactor = 1 - basChurn - repChurn;
+  // Front desk satisfaction affects retention: FD score 0→+2% churn, 100→-1.5% churn
+  const fds=calcFDSatisfaction(G,li);
+  const fdChurn = (50-fds) * 0.0004; // ±0.02 at extremes
+  let retFactor = 1 - basChurn - repChurn - fdChurn;
   if(price>95) retFactor += 0.10;
   else if(price>75) retFactor += 0.05;
   else if(price<50) retFactor -= 0.08;
@@ -2826,6 +2851,13 @@ function updateReputation(G, li){
   if((d.cashPrice||65)>95) loc.rep+=2;
   // Severe overhead underfunding: patients notice a poorly-stocked clinic
   if(calcOverheadRatio(G,li)<0.50) loc.rep=Math.max(0,loc.rep-1);
+  // ── Front desk satisfaction → reputation drift ──
+  // FD score 0–100; score<40 = net negative, 40–60 = neutral, >60 = positive
+  const fds=calcFDSatisfaction(G,li);
+  if(total>5){ // only matters once you have patients
+    const fdRepDelta = (fds-50) * 0.035; // ±1.75 rep/mo at extremes (score 0 or 100)
+    loc.rep+=fdRepDelta;
+  }
   loc.rep=clamp(loc.rep,0,100);
 }
 
@@ -2834,12 +2866,13 @@ function generateReviews(G, li){
   const satisf=loc.rep/100;
   const total=loc.patients.cash+loc.patients.insured;
   const newCount=Math.floor(total*satisf*0.015);
+  // FD satisfaction shifts the positive-review probability ±10pp
+  const fds=calcFDSatisfaction(G,li);
+  const fdReviewBonus=(fds-50)*0.002; // ±0.10 at extremes
   for(let i=0;i<newCount;i++){
     const r=Math.random();
-    if(loc.rep>=80)       loc.reviews.push(r<0.85?1:-1);
-    else if(loc.rep>=60)  loc.reviews.push(r<0.70?1:-1);
-    else if(loc.rep>=40)  loc.reviews.push(r<0.50?1:-1);
-    else                  loc.reviews.push(r<0.20?1:-1);
+    const posThresh=(loc.rep>=80?0.85:loc.rep>=60?0.70:loc.rep>=40?0.50:0.20)+fdReviewBonus;
+    loc.reviews.push(r<clamp(posThresh,0.05,0.97)?1:-1);
   }
   // cap reviews at 200 (rolling window)
   if(loc.reviews.length>200) loc.reviews=loc.reviews.slice(-200);
@@ -4132,16 +4165,26 @@ function renderOverview(){
   const massCap=calcMassageCapacity(G,li);
   const totalMassage=(loc.patients.massageCash||0)+(loc.patients.massageInsured||0);
   return `
-  <div class="card-grid card-grid-3" style="margin-bottom:10px">
+  ${(()=>{
+    const fds=calcFDSatisfaction(G,li);
+    const fdsColor=fds>=70?'var(--green)':fds>=45?'var(--amber)':'var(--red)';
+    const fdCount=loc.staff.filter(id=>G.staffPool[id]?.role==='frontdesk').length;
+    const fdsLabel=fds>=75?'Excellent':fds>=60?'Good':fds>=45?'Adequate':fds>=30?'Poor':'Very Poor';
+    return `<div class="card-grid card-grid-3" style="margin-bottom:10px">
     <div class="stat-box"><div class="stat-val">${total}</div><div class="stat-lbl">Chiro Patients</div></div>
     <div class="stat-box"><div class="stat-val" style="color:var(--amber)">${totalMassage}</div><div class="stat-lbl">Massage Patients</div></div>
     <div class="stat-box"><div class="stat-val" style="color:var(--green)">$${fmtN(calcRevenue(G,li))}</div><div class="stat-lbl">Est. Revenue</div></div>
   </div>
   <div class="card-grid card-grid-3" style="margin-bottom:10px">
     <div class="stat-box"><div class="stat-val" style="color:var(--amber)">${stars===null?'—':stars.toFixed(1)+'★'}</div><div class="stat-lbl">Star Rating</div></div>
-    <div class="stat-box"><div class="stat-val" style="color:var(--teal)">${massCap.visitsPerDay||0}</div><div class="stat-lbl">Massage Cap/Day</div></div>
+    <div class="stat-box" title="Front Desk Satisfaction — affects reputation, reviews, and patient retention">
+      <div class="stat-val" style="color:${fdsColor}">${fds}</div>
+      <div class="stat-lbl">Patient Exp${fdCount===0?' ⚠':fdCount===1?' (1 FD)':' ✓'}</div>
+      <div style="font-size:9px;color:${fdsColor};margin-top:2px">${fdsLabel}</div>
+    </div>
     <div class="stat-box"><div class="stat-val" style="color:var(--purple)">${massCap.therapists||0}/${massCap.massageRooms||0}</div><div class="stat-lbl">Therapists/Rooms</div></div>
-  </div>
+  </div>`;
+  })()}
   <div class="card">
     <div class="card-title">Capacity</div>
     <div class="field-row"><label>Patients vs Capacity</label>
@@ -4445,19 +4488,36 @@ function renderRooms(){
       hireRows+=`<tr><td>${info.label}</td><td colspan="3" class="text-muted">🔒 ${info.unlockDesc||('Unlocks at '+info.unlockPatients+' patients')} (${need} more patient${need===1?'':'s'} needed across all locations)</td></tr>`;
       continue;
     }
-    // Enforce limits
+    // Enforce limits — room-based AND patient-based
     const current=loc.staff.filter(id=>G.staffPool[id]?.role===role).length;
     const equippedChiro=loc.rooms.filter(r=>r.type==='chiro'&&r.equipped).length;
     const equippedMassage=loc.rooms.filter(r=>r.type==='massage'&&r.equipped).length;
-    const atMax=(info.max!==null && current>=info.max)
-      ||(role==='associate' && current>=equippedChiro)   // need an equipped room per associate
-      ||(role==='massage' && current>=equippedMassage)   // need an equipped massage room per MT
-      ||(role==='assistant' && current>=equippedChiro*2);
+    const locPts=loc.patients.cash+loc.patients.insured;
+    // Patient-based slot limit (patientsPerSlot in STAFF_TYPES)
+    const patientSlots=info.patientsPerSlot ? Math.max(0,Math.floor(locPts/info.patientsPerSlot)) : 999;
+    const roomAtMax=(role==='associate'&&current>=equippedChiro)
+      ||(role==='massage'&&current>=equippedMassage)
+      ||(role==='assistant'&&current>=equippedChiro*2);
+    const patientAtMax=info.patientsPerSlot && current>=patientSlots;
+    const hardAtMax=(info.max!==null&&current>=info.max);
+    const atMax=hardAtMax||roomAtMax||patientAtMax;
+    // Build a reason string for the disabled state
+    let limitReason='At limit';
+    if(patientAtMax&&info.patientsPerSlot){
+      const nextAt=(current+1)*info.patientsPerSlot;
+      limitReason=`Need ${nextAt} patients (have ${locPts})`;
+    } else if(roomAtMax){
+      limitReason=role==='associate'?'Need another chiro room':'Need another massage room';
+    }
+    // Subtext for front desk: show satisfaction score
+    const fdNote=role==='frontdesk'
+      ?`<br><span style="font-size:9px;color:var(--cyan)">Patient Exp: ${calcFDSatisfaction(G,li)}/100${current===0?' ⚠ No FD staff':current===1?' — hire 2nd for full bonus':' ✓ Full team'}</span>`
+      :(info.patientsPerSlot?`<br><span style="font-size:9px;color:var(--muted)">${info.slotDesc||`1 per ${info.patientsPerSlot} patients`}</span>`:'');
     hireRows+=`<tr>
-      <td>${info.label}</td>
+      <td>${info.label}${fdNote}</td>
       <td class="mono">$${fmtN(info.salary)}/mo${info.annualLicense?` +$${info.annualLicense}/yr`:''}</td>
-      <td>${current} hired</td>
-      <td><button class="btn btn-primary" style="padding:3px 10px;font-size:11px" ${atMax?'disabled':''} onclick="hireStaff('${role}',selectedLoc)">${atMax?'At limit':'Hire'}</button></td>
+      <td>${current} hired${info.patientsPerSlot?` / ${patientSlots} allowed`:''}</td>
+      <td><button class="btn btn-primary" style="padding:3px 10px;font-size:11px" ${atMax?'disabled':''} onclick="hireStaff('${role}',selectedLoc)">${atMax?limitReason:'Hire'}</button></td>
     </tr>`;
   }
 
