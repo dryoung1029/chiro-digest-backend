@@ -864,6 +864,25 @@ const MARKETING_ACTIVITIES = {
   healthfair:{label:'Health Fair',      costBase:300, timeHrs:8, maxPerMonth:1, leadsBase:16, repBonus:4, mp:3},
   directmail:{label:'Direct Mail',      costBase:600, timeHrs:2, maxPerMonth:1, leadsBase:4,  repBonus:0, mp:1},
 };
+// ── Clinic Upgrades ──
+// One-time purchases that improve Patient Experience score and provide secondary bonuses.
+// Stored as loc.upgrades = ['seating', 'coffee', ...] — bought once, permanent.
+const CLINIC_UPGRADES=[
+  // Waiting Room
+  {id:'seating',    cat:'Waiting Room', label:'Ergonomic Seating',        cost:800,  expBonus:5,  desc:'Comfortable chairs throughout. Patients notice immediately.'},
+  {id:'coffee',     cat:'Waiting Room', label:'Coffee & Tea Station',      cost:500,  expBonus:4,  desc:'Small touch, big impression. Makes waits feel shorter.'},
+  {id:'kids_corner',cat:'Waiting Room', label:"Kids' Play Corner",         cost:700,  expBonus:4,  repBonus:0.3, desc:'Families love it. Boosts family word-of-mouth referrals.'},
+  {id:'tv_wifi',    cat:'Waiting Room', label:'TV & Free Wi-Fi',           cost:1200, expBonus:4,  desc:'Reduces perceived wait time significantly.'},
+  // Ambiance
+  {id:'decor',      cat:'Ambiance',     label:'Professional Decor',        cost:1800, expBonus:6,  repBonus:0.4, desc:'Polished first impression. Subtle but lasting rep boost.'},
+  {id:'music',      cat:'Ambiance',     label:'Sound System & Curated Music',cost:800, expBonus:3,  desc:'Calming atmosphere. Patients feel at ease.'},
+  {id:'plants',     cat:'Ambiance',     label:'Living Plants & Artwork',   cost:600,  expBonus:3,  desc:'Biophilic design proven to reduce patient anxiety.'},
+  // Technology
+  {id:'checkin',    cat:'Technology',   label:'Digital Check-In Tablets',  cost:1500, expBonus:5,  collectionsBonus:0.02, desc:'Faster intake, fewer errors. Boosts collections rate +2%.'},
+  {id:'reminders',  cat:'Technology',   label:'Automated Appointment Reminders', cost:2000, expBonus:4, noShowReduction:0.12, desc:'Reduces no-shows ~12%. Patients feel cared for.'},
+  {id:'portal',     cat:'Technology',   label:'Patient Portal / App',      cost:3000, expBonus:5,  retentionBonus:0.01, desc:'Patients can book, review records, message you. Retention +1%.'},
+];
+
 // Monthly Marketing Points: base per difficulty + bonuses from manager/certifications
 // Each activity costs MP (see mp field above). Social media costs 1 MP per $300 budget.
 // Hard cap: can't activate activities that would exceed available MP.
@@ -878,7 +897,10 @@ const SEASONAL_FACTORS = [1.18, 1.12, 1.05, 1.00, 0.98, 0.88, 0.82, 0.88, 1.02, 
 function collectionsRate(G, li){
   const loc = G.locs[li];
   const fd = loc.staff.filter(id=>G.staffPool[id]?.role==='frontdesk').length;
-  return fd >= 2 ? 0.96 : fd === 1 ? 0.87 : 0.73;
+  const base = fd >= 2 ? 0.96 : fd === 1 ? 0.87 : 0.73;
+  // Digital check-in tablet improves coding accuracy → +2% collections
+  const techBonus = (loc.upgrades||[]).includes('checkin') ? 0.02 : 0;
+  return Math.min(0.99, base + techBonus);
 }
 
 // Associate DCs ramp from 60% → 100% productivity over their first 4 months
@@ -904,6 +926,7 @@ function newLoc(id, name, tier, tierId){
     rooms: Array.from({length:tier.rooms},(_,i)=>({id:i,type:'chiro',equipped:false})),
     staff:[], patients:{cash:0,insured:0,wellness:0,periodic:0,massageCash:0,massageInsured:0}, rep:50, reviews:[],
     equipment:[], specialEquip:[], competitorMonths:0, bonusLeads:0, vipPatients:[],
+    upgrades:[], lastMoraleAction:-99,
     enrolledByNetwork:{},
     insRevQueue:[0,0], lastInsReceived:0, lastInsRevBilled:0,
     massageInsRevQueue:[0,0], lastMassageInsReceived:0,
@@ -2271,8 +2294,10 @@ function calcDCHoursAvailable(G, li){
   for(const id of loc.staff){
     const s = G.staffPool[id];
     if(!s) continue;
-    if(s.isOwner)          totalHrs += Math.round(160 * (G.ownerBurnout ? 0.85 : 1.0));
-    else if(s.role==='associate') totalHrs += Math.round(160 * associateEfficiency(s, G.totalMonths));
+    // Low morale reduces effective DC hours: <30 morale = -20%, <50 = -10%
+    const moraleMult = (s.morale||75)<30 ? 0.80 : (s.morale||75)<50 ? 0.90 : 1.0;
+    if(s.isOwner)          totalHrs += Math.round(160 * (G.ownerBurnout ? 0.85 : 1.0) * moraleMult);
+    else if(s.role==='associate') totalHrs += Math.round(160 * associateEfficiency(s, G.totalMonths) * moraleMult);
   }
   if(totalHrs===0) totalHrs = 0; // no DCs means no chiro hours
   // Overhead penalty: underfunding the operational budget reduces effective DC hours
@@ -2307,20 +2332,36 @@ function calcMarketingPoints(G, li){
   return {total, used, remaining: Math.max(0, total - used)};
 }
 
-// ── Front Desk Satisfaction Score (0–100) ──
-// Drives rep drift, review quality, and retention bonus.
-// 0 FD = understaffed experience; 1 FD = standard; 2 FD = white-glove.
-// FD morale amplifies or dampens the effect.
+// ── Clinic Amenity Score (0–100) ──
+// Sum of expBonus values from purchased upgrades, capped at 100.
+function calcAmenityScore(G, li){
+  const upgrades = G.locs[li].upgrades||[];
+  const total = upgrades.reduce((s,id)=>{
+    const u=CLINIC_UPGRADES.find(c=>c.id===id);
+    return s+(u?u.expBonus:0);
+  },0);
+  return Math.min(100, total);
+}
+
+// ── Patient Experience Score (0–100) ──
+// Primary driver: reputation. Secondary: front desk quality + clinic amenities.
+// Feeds rep drift, review quality, and patient retention.
 function calcFDSatisfaction(G, li){
   const loc = G.locs[li];
+  // Rep is the foundation — high rep clinic = happy patients
+  const repBase = loc.rep * 0.55; // rep 0→0, rep 100→55
+
+  // Front desk quality adds ±20 pts
   const fdStaff = loc.staff.map(id=>G.staffPool[id]).filter(s=>s&&s.role==='frontdesk');
   const fdCount = fdStaff.length;
-  if(fdCount===0) return 20; // poor — no one managing phones/check-in
-  const avgFDMorale = fdStaff.reduce((s,f)=>s+(f.morale||75),0) / fdCount;
-  const base = fdCount>=2 ? 80 : 60; // 2 FD = great baseline; 1 FD = adequate
-  // Morale shifts score ±20 from baseline
-  const moraleShift = (avgFDMorale - 75) * (20/75);
-  return clamp(Math.round(base + moraleShift), 0, 100);
+  const avgFDMorale = fdCount>0 ? fdStaff.reduce((s,f)=>s+(f.morale||75),0)/fdCount : 50;
+  const fdBase = fdCount>=2 ? 15 : fdCount===1 ? 5 : -15;
+  const fdMoraleShift = (avgFDMorale - 75) * 0.18; // ±~14 pts at extremes
+
+  // Clinic amenities add up to +30 pts
+  const amenityBonus = calcAmenityScore(G,li) * 0.30;
+
+  return clamp(Math.round(repBase + fdBase + fdMoraleShift + amenityBonus), 0, 100);
 }
 
 function calcMassageCapacity(G, li){
@@ -2507,7 +2548,11 @@ function calcPatientFlow(G, li){
   // Front desk satisfaction affects retention: FD score 0→+2% churn, 100→-1.5% churn
   const fds=calcFDSatisfaction(G,li);
   const fdChurn = (50-fds) * 0.0004; // ±0.02 at extremes
-  let retFactor = 1 - basChurn - repChurn - fdChurn;
+  // Portal upgrade provides direct retention bonus
+  const portalBonus = (loc.upgrades||[]).includes('portal') ? 0.01 : 0;
+  // Reminder system reduces no-show churn
+  const reminderBonus = (loc.upgrades||[]).includes('reminders') ? 0.005 : 0;
+  let retFactor = 1 - basChurn - repChurn - fdChurn + portalBonus + reminderBonus;
   if(price>95) retFactor += 0.10;
   else if(price>75) retFactor += 0.05;
   else if(price<50) retFactor -= 0.08;
@@ -2836,9 +2881,17 @@ function updateReputation(G, li){
   const loc=G.locs[li];
   // Drift toward 50
   loc.rep += (50-loc.rep)*0.02;
-  // Morale influence
+  // Morale influence — stronger effect; very low morale actively drags rep down
   const am=avgMorale(G,li);
-  loc.rep += (am-50)*0.05;
+  loc.rep += (am-50)*0.08; // was 0.05
+  // Particularly bad morale: extra penalty
+  if(am<25) loc.rep=Math.max(0,loc.rep-0.5);
+  // Clinic amenity passive rep bonus (decor/plants/etc give subtle ongoing boost)
+  const amenityRepBonus=(G.locs[li].upgrades||[]).reduce((s,id)=>{
+    const u=CLINIC_UPGRADES.find(c=>c.id===id);
+    return s+(u&&u.repBonus?u.repBonus:0);
+  },0);
+  loc.rep=Math.min(100,loc.rep+amenityRepBonus);
   // Volume signal
   const total=loc.patients.cash+loc.patients.insured;
   if(total>100) loc.rep+=0.5;
@@ -3353,9 +3406,9 @@ function _advanceMonthCore(){
       eq.maintainedThisMonth=false;
 
       // Feature 6: Equipment depreciation cliff — catastrophic failure
-      // High condition (>85%) provides strong protection even if totalMissed is high
-      const failThreshold = eq.condition>85 ? 0.97 : eq.condition>70 ? 0.88 : 0.70;
-      if((eq.totalMissed||0)>=6 && Math.random()>failThreshold){
+      // Requires 8+ consecutive missed months. Probabilities: >85%→3%, >70%→7%, ≤70%→18%
+      const failThreshold = eq.condition>85 ? 0.97 : eq.condition>70 ? 0.93 : 0.82;
+      if((eq.totalMissed||0)>=8 && Math.random()>failThreshold){
         eq.catastrophicFailure=true;
         logEv(G,'neg',`[${loc.name}] ${eq.name} suffered a catastrophic failure after ${eq.totalMissed} missed maintenance months!`);
         const newCost=2500; const usedCost=1500;
@@ -4538,6 +4591,61 @@ function renderRooms(){
     <table class="gtable"><thead><tr><th>Role</th><th>Cost</th><th>Current</th><th></th></tr></thead><tbody>${hireRows}</tbody></table>
   </div>
   <div class="card">
+    <div class="card-title">🎯 Team Morale Actions <span style="font-size:11px;color:var(--muted);font-weight:normal">— 1 per month</span></div>
+    ${(()=>{
+      const staff=loc.staff.map(id=>G.staffPool[id]).filter(s=>s&&!s.isOwner);
+      const monthsSince=G.totalMonths-(loc.lastMoraleAction||0);
+      const onCooldown=monthsSince<1;
+      if(!staff.length) return `<p class="text-muted" style="font-size:11px">Hire staff to unlock team morale actions.</p>`;
+      const actions=[
+        {type:'meeting', label:'Informal Team Meeting', cost:0,       boost:7,  time:'~1hr'},
+        {type:'lunch',   label:'Team Lunch',            cost:200,     boost:12, time:''},
+        {type:'training',label:'Half-Day Training',     cost:300,     boost:15, time:'½ day'},
+        {type:'bonus',   label:'Team Bonus',            cost:staff.length*350, boost:25, time:''},
+      ];
+      let html=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">`;
+      for(const a of actions){
+        const canAfford=G.cash>=a.cost;
+        html+=`<button class="btn ${!onCooldown&&canAfford?'btn-cyan':'btn-ghost'}" style="font-size:11px;padding:6px;text-align:left;display:flex;flex-direction:column;gap:2px"
+          onclick="teamAction('${a.type}',${li})" ${onCooldown||!canAfford?'disabled':''}>
+          <span style="font-weight:700">${a.label}</span>
+          <span style="font-size:10px;color:var(--muted)">${a.cost?`$${fmtN(a.cost)}`:'Free'}${a.time?' · '+a.time:''} · morale +${a.boost}</span>
+        </button>`;
+      }
+      html+=`</div>`;
+      if(onCooldown) html+=`<div style="font-size:10px;color:var(--amber);margin-top:6px">⏳ Used this month — available next month</div>`;
+      return html;
+    })()}
+  </div>
+  <div class="card">
+    <div class="card-title">🏥 Clinic Upgrades <span style="font-size:11px;color:var(--muted);font-weight:normal">— Improve Patient Experience (currently ${calcFDSatisfaction(G,li)}/100)</span></div>
+    ${(()=>{
+      const cats=[...new Set(CLINIC_UPGRADES.map(u=>u.cat))];
+      let html='';
+      for(const cat of cats){
+        const items=CLINIC_UPGRADES.filter(u=>u.cat===cat);
+        html+=`<div style="font-size:10px;font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:.5px;margin:8px 0 4px">${cat}</div>`;
+        html+=`<div style="display:grid;gap:5px">`;
+        for(const upg of items){
+          const owned=(loc.upgrades||[]).includes(upg.id);
+          const canAfford=G.cash>=upg.cost;
+          html+=`<div style="background:var(--s2);border:1px solid ${owned?'var(--green)':'var(--border)'};border-radius:6px;padding:8px;display:flex;align-items:center;gap:8px">
+            <div style="flex:1">
+              <span style="font-size:12px;font-weight:600;color:${owned?'var(--green)':'var(--text)'}">${owned?'✓ ':''}"${upg.label}"</span>
+              <div style="font-size:10px;color:var(--muted);margin-top:2px">${upg.desc}</div>
+              <div style="font-size:10px;color:var(--cyan);margin-top:2px">+${upg.expBonus} Patient Exp${upg.repBonus?' · +'+upg.repBonus+' rep/mo':''}${upg.collectionsBonus?' · +'+Math.round(upg.collectionsBonus*100)+'% collections':''}${upg.retentionBonus?' · retention +'+Math.round(upg.retentionBonus*100)+'%':''}</div>
+            </div>
+            ${owned
+              ? '<span style="font-size:10px;color:var(--green);flex-shrink:0">INSTALLED</span>'
+              : `<button class="btn btn-cyan" style="font-size:10px;padding:4px 10px;flex-shrink:0" onclick="buyUpgrade('${upg.id}',${li})" ${!canAfford?'disabled':''}>${canAfford?`$${fmtN(upg.cost)}`:`Need $${fmtN(upg.cost)}`}</button>`}
+          </div>`;
+        }
+        html+=`</div>`;
+      }
+      return html;
+    })()}
+  </div>
+  <div class="card">
     <div class="card-title">Malpractice Insurance</div>
     <div class="field-row">
       <label>Coverage Active <span style="color:var(--muted);font-size:10px">($600/mo)</span></label>
@@ -4950,19 +5058,70 @@ function hireStaff(role,li){
   logEv(G,'info',`Hired ${name} as ${info.label} — $${fmtN(info.salary)}/mo`);
   renderTab('rooms'); renderSidebar();
 }
+// ── Team Morale Actions ──
+function teamAction(type, li){
+  const loc=G.locs[li];
+  const staff=loc.staff.map(id=>G.staffPool[id]).filter(s=>s&&!s.isOwner);
+  if(!staff.length){showAlert('No staff to motivate.','warn');return;}
+  const monthsSince=G.totalMonths-(loc.lastMoraleAction||0);
+  if(monthsSince<1){showAlert('You already ran a team activity this month.','warn');return;}
+  const actions={
+    lunch:{label:'Team Lunch',cost:200,boost:12,desc:'Boosts all staff morale +12. Quick and appreciated.'},
+    bonus:{label:'Team Bonus',cost:staff.length*350,boost:25,desc:`Pay each staff member a $350 bonus. Morale +25 each.`},
+    meeting:{label:'Informal Team Meeting',cost:0,boost:7,desc:'No cost — just genuine appreciation and open dialogue. Morale +7 each.'},
+    training:{label:'Half-Day Training',cost:300,boost:15,desc:'Invest in their skills. Morale +15 each. Costs $300 for materials.'},
+  };
+  const a=actions[type];
+  if(!a){return;}
+  if(G.cash<a.cost){showAlert(`Need $${fmtN(a.cost)} for the ${a.label}.`,'warn');return;}
+  showConfirm(`${a.label} — $${fmtN(a.cost)}\n\n${a.desc}`,()=>{
+    G.cash-=a.cost;
+    for(const s of staff) s.morale=Math.min(100,(s.morale||75)+a.boost);
+    loc.lastMoraleAction=G.totalMonths;
+    logEv(G,'pos',`[${loc.name}] ${a.label}: all staff morale +${a.boost}`);
+    renderTab('rooms');
+  },'pos');
+}
+
+// ── Clinic Upgrades ──
+function buyUpgrade(upgradeId, li){
+  const loc=G.locs[li];
+  const upg=CLINIC_UPGRADES.find(u=>u.id===upgradeId);
+  if(!upg) return;
+  if((loc.upgrades||[]).includes(upgradeId)){showAlert('Already installed.','warn');return;}
+  if(G.cash<upg.cost){showAlert(`Need $${fmtN(upg.cost)}.`,'warn');return;}
+  showConfirm(`Install "${upg.label}" for $${fmtN(upg.cost)}?\n\n${upg.desc}`,()=>{
+    G.cash-=upg.cost;
+    if(!loc.upgrades) loc.upgrades=[];
+    loc.upgrades.push(upgradeId);
+    logEv(G,'pos',`[${loc.name}] Clinic upgrade installed: ${upg.label}`);
+    renderTab('rooms');
+  },'pos');
+}
+
 function fireStaff(id){
   const s=G.staffPool[id];
   if(!s) return;
-  showConfirm(`Fire ${s.name}?${s.role==='associate'?' They may take patients with them when they leave.':''}`,(()=>{
+  const homeLoc=G.locs.find(l=>l.staff.includes(id));
+  const teamSize=homeLoc?homeLoc.staff.filter(x=>G.staffPool[x]&&!G.staffPool[x].isOwner&&x!==id).length:0;
+  const moraleWarning=teamSize>0?`\n\nThe remaining team will take a morale hit (−12) from the sudden departure.`:'';
+  showConfirm(`Fire ${s.name}?${s.role==='associate'?' They may take patients with them when they leave.':''}${moraleWarning}`,(()=>{
     if(s.role==='associate'){
       const pctLost=randF(0.10,0.20);
-      const loc=G.locs.find(l=>l.staff.includes(id));
-      if(loc){
-        for(const netId in loc.enrolledByNetwork) loc.enrolledByNetwork[netId]=Math.floor(loc.enrolledByNetwork[netId]*(1-pctLost));
-        loc.patients.insured=Math.floor(loc.patients.insured*(1-pctLost));
-        loc.patients.cash=Math.floor(loc.patients.cash*(1-pctLost));
+      if(homeLoc){
+        for(const netId in homeLoc.enrolledByNetwork) homeLoc.enrolledByNetwork[netId]=Math.floor(homeLoc.enrolledByNetwork[netId]*(1-pctLost));
+        homeLoc.patients.insured=Math.floor(homeLoc.patients.insured*(1-pctLost));
+        homeLoc.patients.cash=Math.floor(homeLoc.patients.cash*(1-pctLost));
         logEv(G,'neg',`${s.name} left and took ~${Math.round(pctLost*100)}% of patients with them`);
       }
+    }
+    // Team morale penalty — losing a colleague hurts
+    if(homeLoc && teamSize>0){
+      for(const tid of homeLoc.staff){
+        const ts=G.staffPool[tid];
+        if(ts && !ts.isOwner && tid!==id) ts.morale=Math.max(0,(ts.morale||75)-12);
+      }
+      logEv(G,'warn',`Team morale dropped after ${s.name} was let go (-12 all staff at ${homeLoc.name})`);
     }
     for(const loc of G.locs) loc.staff=loc.staff.filter(x=>x!==id);
     delete G.staffPool[id];
