@@ -942,7 +942,7 @@ function newLoc(id, name, tier, tierId){
 
 function newGame(doctorName, clinicName, tierId, difficulty){
   const tier = LOCATION_TIERS.find(t=>t.id===tierId)||LOCATION_TIERS[0];
-  const startCash      = {easy:75000, normal:35000, hard:15000}[difficulty]||35000;
+  const startCash      = {easy:75000, normal:35000, hard:25000}[difficulty]||35000;
   const personalFloor  = {easy:2500,  normal:4500,  hard:6000}[difficulty]||4500;
 
   G = {
@@ -2884,8 +2884,8 @@ function updateReputation(G, li){
   // Morale influence — scales with how bad it gets
   const am=avgMorale(G,li);
   loc.rep += (am-50)*0.12; // was 0.08 — medium morale now meaningfully drags rep
-  // Medium morale zone (30–55): extra slow bleed
-  if(am<55 && am>=30) loc.rep=Math.max(0,loc.rep-0.25);
+  // Medium morale zone (30–45): extra slow bleed — only triggers when genuinely poor
+  if(am<45 && am>=30) loc.rep=Math.max(0,loc.rep-0.25);
   // Particularly bad morale: heavy penalty
   if(am<30) loc.rep=Math.max(0,loc.rep-0.75);
   // Clinic amenity passive rep bonus (decor/plants/etc give subtle ongoing boost)
@@ -5629,7 +5629,7 @@ function buildSetupUI(){
     </div>`).join('');
   const dc=document.getElementById('diff-cards');
   const hardUnlocked=featureUnlocked('hard_mode');
-  dc.innerHTML=[{id:'easy',label:'Easy',cash:75000},{id:'normal',label:'Normal',cash:35000},{id:'hard',label:'Hard',cash:15000}]
+  dc.innerHTML=[{id:'easy',label:'Easy',cash:75000},{id:'normal',label:'Normal',cash:35000},{id:'hard',label:'Hard',cash:25000}]
     .map(d=>{
       if(d.id==='hard'&&!hardUnlocked){
         return `<div class="diff-card" style="opacity:0.5;pointer-events:none;cursor:not-allowed">
