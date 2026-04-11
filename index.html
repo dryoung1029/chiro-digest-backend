@@ -97,6 +97,8 @@ input[type=number]:focus{outline:none;border-color:var(--cyan)}
 .btn-ghost:hover{color:var(--text);border-color:var(--muted)}
 .btn-amber{background:#7a5000;color:var(--amber)}
 .btn-amber:hover{background:#9a6800}
+.btn-cyan{background:var(--cyan2);color:#fff}
+.btn-cyan:hover{background:var(--cyan)}
 .btn-lg{padding:10px 24px;font-size:14px}
 .btn:disabled{opacity:.4;cursor:not-allowed}
 /* ── Tags / Badges ── */
@@ -419,6 +421,7 @@ input[type=number]:focus{outline:none;border-color:var(--cyan)}
     </div></div>
     </div>
     <button class="btn btn-primary btn-lg" style="width:100%;margin-top:8px" onclick="startGame()">Open Your Practice →</button>
+    <div id="meta-progress"></div>
   </div>
 </div>
 
@@ -620,6 +623,7 @@ input[type=number]:focus{outline:none;border-color:var(--cyan)}
     <h2 id="end-title">Game Over</h2>
     <p id="end-msg"></p>
     <div class="end-stats" id="end-stats"></div>
+    <div id="end-meta"></div>
     <button class="btn btn-primary btn-lg" onclick="showSetup()">Play Again</button>
   </div>
 </div>
@@ -646,6 +650,58 @@ input[type=number]:focus{outline:none;border-color:var(--cyan)}
 
 <script>
 'use strict';
+// ════════════════════════════════════════════════════════
+//  META-PROGRESSION (persists across games)
+// ════════════════════════════════════════════════════════
+let META={gamesWon:0,fastWins:0,normalWins:0,hardWins:0,totalAchievements:[],unlockedFeatures:[]};
+function loadMeta(){
+  try{const s=localStorage.getItem('chiroventure_meta');
+    if(s) META=Object.assign({gamesWon:0,fastWins:0,normalWins:0,hardWins:0,totalAchievements:[],unlockedFeatures:[]},JSON.parse(s));
+  }catch(e){}
+}
+function saveMeta(){localStorage.setItem('chiroventure_meta',JSON.stringify(META));}
+function resetMeta(){META={gamesWon:0,fastWins:0,normalWins:0,hardWins:0,totalAchievements:[],unlockedFeatures:[]};saveMeta();}
+
+const UNLOCK_GATES={
+  seasonal_patterns:   ()=>META.totalAchievements.includes('first_patient'),
+  community_outreach:  ()=>META.totalAchievements.includes('credentialed'),
+  staff_storylines:    ()=>META.totalAchievements.includes('first_hire'),
+  laser_therapy:       ()=>META.totalAchievements.includes('fifty_patients'),
+  dc_certifications:   ()=>META.totalAchievements.includes('century_club'),
+  vip_patients:        ()=>META.totalAchievements.includes('community_pillar'),
+  shockwave_therapy:   ()=>META.totalAchievements.includes('five_star'),
+  competitor_dynamics: ()=>META.totalAchievements.includes('trusted'),
+  hard_mode:           ()=>META.gamesWon>=1,
+  advanced_events:     ()=>META.normalWins>=1,
+  staff_partner_offer: ()=>META.totalAchievements.includes('first_hire'),
+};
+const UNLOCK_LABELS={
+  seasonal_patterns:   'Seasonal Patient Patterns',
+  community_outreach:  'Community Outreach Programs',
+  staff_storylines:    'Staff Story Events',
+  laser_therapy:       'Laser Therapy Equipment',
+  dc_certifications:   'DC Certification System',
+  vip_patients:        'VIP Patient System',
+  shockwave_therapy:   'Shockwave Therapy Equipment',
+  competitor_dynamics: 'Competitor Intelligence',
+  hard_mode:           'Hard Mode',
+  advanced_events:     'Advanced Challenge Events',
+  staff_partner_offer: 'Associate Partner Storylines',
+};
+const UNLOCK_HINTS={
+  seasonal_patterns:   'See your first patient',
+  community_outreach:  'Get credentialed with an insurance network',
+  staff_storylines:    'Make your first hire',
+  laser_therapy:       'Reach 50 active patients',
+  dc_certifications:   'Reach 100 active patients',
+  vip_patients:        'Reach reputation 80',
+  shockwave_therapy:   'Earn a 4.8\u2605 rating',
+  competitor_dynamics: 'Earn a 4.0\u2605 rating',
+  hard_mode:           'Win a game on Normal or Easy',
+  advanced_events:     'Win a game on Normal',
+  staff_partner_offer: 'Make your first hire',
+};
+function featureUnlocked(f){return UNLOCK_GATES[f]?UNLOCK_GATES[f]():true;}
 // ════════════════════════════════════════════════════════
 //  HELPERS
 // ════════════════════════════════════════════════════════
@@ -717,6 +773,21 @@ function dcCapacityHours(roomsAssigned){
 //  CONSTANTS
 // ════════════════════════════════════════════════════════
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+const SEASONAL_MODS=[
+  {cashMult:1.15,insMult:1.10,note:'\uD83C\uDFAF New Year \u2014 resolution patients spike'},    // Jan
+  {cashMult:1.00,insMult:1.05,note:''},                                            // Feb
+  {cashMult:1.05,insMult:1.10,note:'\uD83D\uDCCB Spring \u2014 insurance deductibles reset'},    // Mar
+  {cashMult:1.10,insMult:1.15,note:'\u26BD Spring sports season begins'},              // Apr
+  {cashMult:1.05,insMult:1.05,note:''},                                            // May
+  {cashMult:0.95,insMult:0.95,note:'\u2600\uFE0F Summer slowdown'},                         // Jun
+  {cashMult:0.90,insMult:0.90,note:'\u2600\uFE0F Peak summer \u2014 slowest month'},             // Jul
+  {cashMult:0.95,insMult:1.00,note:'\uD83C\uDF92 Back-to-school stress injuries'},           // Aug
+  {cashMult:1.05,insMult:1.10,note:'\uD83C\uDFC8 Fall sports season'},                       // Sep
+  {cashMult:1.10,insMult:1.15,note:'\uD83D\uDCC5 Year-end insurance push'},                  // Oct
+  {cashMult:1.15,insMult:1.20,note:'\uD83D\uDCC5 Year-end insurance sprint'},                // Nov
+  {cashMult:0.85,insMult:0.80,note:'\uD83C\uDF84 Holiday slowdown'},                         // Dec
+];
 
 const LOCATION_TIERS = [
   {id:'small',  name:'Small Suite',   rooms:3,  rent:1200, retention:-0.10, overheadBase:600,  desc:'Strip mall space, low overhead'},
@@ -822,7 +893,7 @@ function newLoc(id, name, tier, tierId){
     id, name, tierObj:tier, tier:tierId, rent:tier.rent,
     rooms: Array.from({length:tier.rooms},(_,i)=>({id:i,type:'chiro',equipped:false})),
     staff:[], patients:{cash:0,insured:0,wellness:0,periodic:0,massageCash:0,massageInsured:0}, rep:50, reviews:[],
-    equipment:[], specialEquip:[], competitorMonths:0, bonusLeads:0,
+    equipment:[], specialEquip:[], competitorMonths:0, bonusLeads:0, vipPatients:[],
     enrolledByNetwork:{},
     insRevQueue:[0,0], lastInsReceived:0, lastInsRevBilled:0,
     massageInsRevQueue:[0,0], lastMassageInsReceived:0,
@@ -890,6 +961,16 @@ function newGame(doctorName, clinicName, tierId, difficulty){
 
     // Feature 8: Insurance Market Saturation
     poolShrinkage: {},
+
+    // DC Certifications
+    cpdHours: 0,
+    certs: [],
+
+    // Community Outreach
+    outreach: [],
+
+    // VIP Patients
+    vipEventsFired: [],
   };
 
   // Owner is always at location 0
@@ -1883,6 +1964,45 @@ const RANDOM_EVENTS = [
      }
      logEv(G,'info','Community award nomination resolved');
    }},
+
+  // ── Staff storyline events (gated by staff_storylines feature unlock) ──
+  {id:'team_morale_boost',type:'pos',baseChance:0.04,
+   title:'\uD83C\uDF82 Team Work Anniversary',
+   msg:()=>'Your front desk coordinator just hit their one-year work anniversary. The team wants to celebrate.\n\nA small gesture goes a long way.',
+   choices:()=>[{label:'Buy the team lunch ($150)',desc:'All staff morale +15'},{label:'Send a heartfelt card (free)',desc:'All staff morale +5'}],
+   effect:(G,li,ctx)=>{
+     const boost=ctx.choice===0?15:5;
+     if(ctx.choice===0) G.cash-=150;
+     for(const id of G.locs[li].staff){const s=G.staffPool[id];if(s&&!s.isOwner)s.morale=Math.min(100,(s.morale||70)+boost);}
+     logEv(G,ctx.choice===0?'pos':'info',`Team morale event: all staff +${boost} morale`);
+   }},
+
+  {id:'staff_upskill',type:'pos',baseChance:0.025,
+   title:'\uD83D\uDCDA Staff Wants to Upskill',
+   msg:()=>'Your massage therapist wants to pursue a medical massage certification.\n\nCost: $800 + 2 days off.\n\nIf certified, their session rate increases 20%.',
+   choices:()=>[{label:'Support them ($800 + 2 days)',desc:'Their RPV +20% permanently'},{label:'Not right now',desc:'Morale -10'}],
+   effect:(G,li,ctx)=>{
+     const mt=Object.values(G.staffPool).find(s=>s.role==='massage'&&G.locs[li].staff.includes(s.id));
+     if(ctx.choice===0){
+       G.cash-=800;
+       if(mt){mt.certified=true;mt.rpvBonus=(mt.rpvBonus||0)+0.20;}
+       logEv(G,'pos','Massage therapist now certified \u2014 session RPV +20%');
+     } else {
+       if(mt) mt.morale=Math.max(0,(mt.morale||70)-10);
+       logEv(G,'warn','Staff upskill declined \u2014 morale -10');
+     }
+   }},
+
+  {id:'office_drama',type:'warn',baseChance:0.02,
+   title:'\uD83D\uDDE3 Office Drama',
+   msg:()=>"Your front desk coordinator mentions that the associate DC has been venting about clinic policies in front of patients.\n\nIt hasn't hurt you yet \u2014 but it could.",
+   choices:()=>[{label:'Have a direct conversation',desc:'Clears the air; minor morale dip'},{label:'Issue a written warning',desc:'Associate morale -20; stops behavior'},{label:'Ignore it for now',desc:'30% chance rep -5 next month'}],
+   effect:(G,li,ctx)=>{
+     const assoc=Object.values(G.staffPool).find(s=>s.role==='associate'&&G.locs[li].staff.includes(s.id));
+     if(ctx.choice===0){if(assoc)assoc.morale=Math.max(30,(assoc.morale||70)-5);logEv(G,'info','Direct conversation \u2014 situation mostly resolved.');}
+     else if(ctx.choice===1){if(assoc)assoc.morale=Math.max(20,(assoc.morale||70)-20);logEv(G,'warn','Written warning issued.');}
+     else {if(Math.random()<0.30){G.locs[li].rep=Math.max(0,G.locs[li].rep-5);logEv(G,'neg','Associate gossip reached patients \u2014 rep -5.');}}
+   }},
 ];
 
 // ─── CONTINUING EDUCATION QUIZ ───
@@ -1975,6 +2095,8 @@ function pushCEQuestion(G){
         // Evaluate result
         const score=G.ceQuiz.correct;
         const passed=score>=2;
+        // CE quiz CPD bonus — award 10 extra CPD hours when all 3 answered correctly
+        if(score===3 && featureUnlocked('dc_certifications')) G.cpdHours=(G.cpdHours||0)+10;
         const fine=passed?0:randInt(1500,3000);
         const repHit=passed?0:-(randInt(4,8));
         if(!passed){
@@ -1995,6 +2117,109 @@ function pushCEQuestion(G){
       }
     }
   },li:0,ctx:{}});
+}
+
+// ════════════════════════════════════════════════════════
+//  DC CERTIFICATIONS
+// ════════════════════════════════════════════════════════
+const DC_CERTS=[
+  {id:'sports_chiro',label:'Sports Chiropractic Cert',cpd:20,cost:3500,
+   desc:'Unlocks athlete patient pool. All active patients earn +15% RPV. Enables sports injury events.'},
+  {id:'pediatric',label:'Pediatric Chiro Cert',cpd:15,cost:2500,
+   desc:'+20% word-of-mouth referrals from wellness and periodic patients.'},
+  {id:'nutrition',label:'Clinical Nutrition Cert',cpd:10,cost:1500,
+   desc:'Adds nutrition consult revenue: +$55/active patient/month.'},
+  {id:'acupuncture',label:'Acupuncture Certification',cpd:30,cost:5000,
+   desc:'Adds acupuncture as a billable service: +$90/active patient/month.'},
+  {id:'decompression',label:'Spinal Decompression Cert',cpd:12,cost:2000,
+   desc:'Unlocks traction table. Required for billing spinal decompression procedures.'},
+];
+
+// ════════════════════════════════════════════════════════
+//  COMMUNITY OUTREACH
+// ════════════════════════════════════════════════════════
+const OUTREACH_OPTIONS=[
+  {id:'sports_sponsor',label:'\uD83C\uDFC5 Sponsor Local Sports Team',cost:800,dcHours:0,
+   delay:2,duration:6,
+   desc:'2-month ramp then +25% athlete cash referrals for 6 months.',
+   tag:'athlete_boost'},
+  {id:'free_screening',label:'\uD83E\uDE7A Free Spinal Screening Event',cost:300,dcHours:3,
+   delay:1,duration:1,
+   desc:'Next month: +15 new cash patients, +4 rep.',
+   tag:'screening'},
+  {id:'corporate_talk',label:'\uD83D\uDCBC Corporate Wellness Seminar',cost:0,dcHours:4,
+   delay:2,duration:1,
+   desc:'2-month delay: +$1,500 revenue, +3 rep, 25% chance of insurance approval.',
+   tag:'corporate'},
+  {id:'charity_day',label:'\u2764\uFE0F Community Adjustment Day',cost:250,dcHours:2,
+   delay:0,duration:1,
+   desc:'Immediate: +8 rep, guaranteed 5\u2605 review.',
+   tag:'charity'},
+];
+
+// ════════════════════════════════════════════════════════
+//  VIP PATIENTS
+// ════════════════════════════════════════════════════════
+const VIP_PATIENTS=[
+  {id:'vip_maria',name:'Maria Chen',triggerAt:30,minRep:65,
+   revenue:180,referrals:3,stayMonths:18,
+   intro:'Maria Chen, a marathon runner, has chosen your clinic for sports chiropractic care. She refers other runners.\n\n+$180/mo revenue, +3 referrals this month.',
+   atRisk:{after:12,title:'VIP at Risk: Maria Chen',
+     msg:"Maria Chen is frustrated with long wait times. She's considering switching to Dr. Competitor.\n\nHire an associate to reduce load or she'll leave \u2014 and take her 3 referrals.",
+     choices:()=>[{label:"I'll fix the capacity",desc:'2-month grace period'},{label:'Let her go',desc:'Lose patient + referrals'}],
+     effect:(G,li,ctx)=>{if(ctx.choice===1){G.locs[li].vipPatients=(G.locs[li].vipPatients||[]).filter(v=>typeof v==='string'||v.id!=='vip_maria');G.locs[li].patients.cash=Math.max(0,(G.locs[li].patients.cash||0)-4);logEv(G,'neg','Maria Chen left \u2014 and took 3 referrals with her.');}}
+   }},
+  {id:'vip_coach',name:'Coach Dan Rivera',triggerAt:20,minRep:70,
+   revenue:200,referrals:8,stayMonths:24,
+   intro:'Coach Dan Rivera, local high school football coach, is now a patient. During the season he sends players.\n\n+$200/mo revenue, +8 referrals per month during fall (Sep-Nov).',
+   atRisk:null},
+  {id:'vip_influencer',name:'Susan Park',triggerAt:40,minRep:75,
+   revenue:120,referrals:0,stayMonths:12,
+   intro:'Susan Park (12K local followers) joined your clinic and wants to feature you on social media.\n\nAccept a complimentary session to unlock 15 new patients?',
+   specialEvent:{
+     title:'Wellness Influencer Feature',
+     msg:"Susan Park wants to feature your clinic on social media. This could bring 15 new patients next month.\n\nAccept a complimentary adjustment session?",
+     choices:()=>[{label:'Yes \u2014 comp session',desc:'+15 patients next month'},{label:'No thanks',desc:'No change'}],
+     effect:(G,li,ctx)=>{if(ctx.choice===0){G.locs[li].patients.cash=Math.min((G.locs[li].patients.cash||0)+15,(calcCapacity(G,li).patientsMax||999));logEv(G,'pos',"Susan Park's feature: +15 new patients!");}}
+   }},
+  {id:'vip_exec',name:'David Thornton (CEO)',triggerAt:45,minRep:80,
+   revenue:350,referrals:5,stayMonths:30,
+   intro:'David Thornton, local CEO, has joined as a cash-pay patient. He refers his executive network.\n\n+$350/mo revenue, +5 high-value referrals.',
+   atRisk:null},
+];
+
+function startOutreach(optId, li){
+  if(!featureUnlocked('community_outreach')) return;
+  const opt=OUTREACH_OPTIONS.find(o=>o.id===optId);
+  if(!opt) return;
+  if(!G.outreach) G.outreach=[];
+  if(G.outreach.some(o=>o.li===li)){showAlert('An outreach program is already running for this location.','warn');return;}
+  const {totalHrs,mktHrs}=calcDCHoursAvailable(G,li);
+  const spentHrs=mktHrs;
+  if(opt.dcHours>0 && (totalHrs-spentHrs)<opt.dcHours){showAlert(`Need ${opt.dcHours} free DC hours this month.`,'warn');return;}
+  if(G.cash<opt.cost){showAlert(`Need $${fmtN(opt.cost)}.`,'warn');return;}
+  showConfirm(`Launch "${opt.label}"?\n\nCost: $${fmtN(opt.cost)}${opt.dcHours?` + ${opt.dcHours} DC hours`:''}\n\n${opt.desc}`,()=>{
+    G.cash-=opt.cost;
+    G.outreach.push({tag:opt.tag, li, monthsLeft:opt.delay||1, duration:opt.duration});
+    logEv(G,'pos',`[${G.locs[li].name}] Outreach started: ${opt.label}`);
+    render();
+  },'pos');
+}
+
+function buyCert(certId){
+  if(!featureUnlocked('dc_certifications')) return;
+  const cert=DC_CERTS.find(c=>c.id===certId);
+  if(!cert) return;
+  if((G.certs||[]).includes(certId)){showAlert('Already certified.','warn');return;}
+  if((G.cpdHours||0)<cert.cpd){showAlert(`Need ${cert.cpd} CPD hours (you have ${G.cpdHours||0}).`,'warn');return;}
+  if(G.cash<cert.cost){showAlert(`Need $${fmtN(cert.cost)} (you have $${fmtN(G.cash)}).`,'warn');return;}
+  showConfirm(`Enroll in ${cert.label} for $${fmtN(cert.cost)}?\n\n${cert.desc}`,()=>{
+    G.cash-=cert.cost;
+    if(!G.certs) G.certs=[];
+    G.certs.push(certId);
+    logEv(G,'pos',`Dr. ${G.doctorName} earned: ${cert.label}`);
+    render();
+  },'pos');
 }
 
 // Feature 4: Patient Satisfaction Score
@@ -2153,6 +2378,12 @@ function calcPatientFlow(G, li){
   const womBonus = loc.rep>=90 ? 1.15 : loc.rep>=80 ? 1.10 : 1.0;
   newCash *= womBonus;
 
+  // Seasonal modifier (on top of existing SEASONAL_FACTORS already applied above)
+  if(featureUnlocked('seasonal_patterns')){
+    const sm=SEASONAL_MODS[G.month-1];
+    newCash=Math.round(newCash*sm.cashMult);
+  }
+
   // Feature 1: Permanent competitor penalty (each competitor -25%, rep≥80 reduces to -10%, stacked, capped at 60% total reduction)
   const permComps=(G.permanentCompetitors||[]).filter(c=>c.locIdx===li).length;
   if(permComps>0){
@@ -2185,6 +2416,8 @@ function calcPatientFlow(G, li){
     newReferrals*=diffMult; // difficulty market-size modifier
     newReferrals*=womBonus; // word-of-mouth bonus from high reputation
     if(loc.competitorMonths>0) newReferrals*=0.85;
+    // Seasonal modifier for insurance referrals
+    if(featureUnlocked('seasonal_patterns')) newReferrals*=SEASONAL_MODS[G.month-1].insMult;
     // Feature 1: Permanent competitor penalty on insurance referrals
     if(permComps>0){
       const penaltyPer=loc.rep>=80?0.10:0.25;
@@ -2389,13 +2622,15 @@ function calcInsRevenue(G, li){
 function calcRevenue(G, li){
   const loc = G.locs[li];
   const price = loc.decisions.cashPrice||65;
+  // Sports chiro cert: +15% RPV on all active patients
+  const sportsMult=(featureUnlocked('dc_certifications')&&(G.certs||[]).includes('sports_chiro'))?1.15:1.0;
   let rev = 0;
   // Cash-pay chiro: active (3 visits), wellness (1 visit), periodic (~0.34 visits/mo avg)
   const wellnessCash  = Math.max(0,(loc.patients.wellness||0) - Math.round((loc.patients.wellness||0)*clamp(loc.patients.insured/Math.max(loc.patients.cash+loc.patients.insured,1),0,1)));
   const periodicCash  = Math.max(0,(loc.patients.periodic||0) - Math.round((loc.patients.periodic||0)*clamp(loc.patients.insured/Math.max(loc.patients.cash+loc.patients.insured,1),0,1)));
-  rev += loc.patients.cash * VISITS_ACTIVE * price;
-  rev += wellnessCash * VISITS_WELLNESS * price;
-  rev += Math.round(periodicCash * VISITS_PERIODIC) * price;
+  rev += loc.patients.cash * VISITS_ACTIVE * price * sportsMult;
+  rev += wellnessCash * VISITS_WELLNESS * price * sportsMult;
+  rev += Math.round(periodicCash * VISITS_PERIODIC) * price * sportsMult;
   // Insurance: display shows last month's received amount (reflects real 2-month lag)
   rev += loc.lastInsReceived||0;
   // Massage (cash): massageCash patients × 2 visits/month × massagePrice
@@ -2411,6 +2646,21 @@ function calcRevenue(G, li){
     const totalVisits = (loc.patients.cash+loc.patients.insured)*VISITS_ACTIVE;
     rev += Math.floor(totalVisits * uptake) * cat.rpv;
   }
+  // VIP patient revenue
+  if(featureUnlocked('vip_patients')){
+    for(const vip of (loc.vipPatients||[])){
+      if(typeof vip==='object') rev+=(vip.revenue||0);
+    }
+  }
+
+  // DC Certification bonuses
+  if(featureUnlocked('dc_certifications')){
+    const certs=G.certs||[];
+    const pts=loc.patients.cash+loc.patients.insured;
+    if(certs.includes('nutrition')) rev+=pts*55;
+    if(certs.includes('acupuncture')) rev+=pts*90;
+  }
+
   // Recession
   if(G.recessionMonths>0) rev*=0.85;
 
@@ -2640,6 +2890,12 @@ function rollRandomEvents(G){
     if(ev.id==='employer_layoffs' && !G.majorEmployerMonths) continue;
     if(ev.id==='major_lawsuit' && (G.majorLawsuitFired||G.year<2)) continue;
     if(ev.id==='ins_revenue_freeze' && (G.insFreezeFired||G.year<2||G.auditMonths>0)) continue;
+    // Gate staff storyline events
+    if(['team_morale_boost','staff_upskill','office_drama'].includes(ev.id) && !featureUnlocked('staff_storylines')) continue;
+    // Gate advanced events
+    if(['major_lawsuit','ins_revenue_freeze'].includes(ev.id) && !featureUnlocked('advanced_events')) continue;
+    // Gate partner offer
+    if(ev.id==='assoc_partner' && !featureUnlocked('staff_partner_offer')) continue;
     const li=randInt(0,G.locs.length-1); // pick a random location
     const loc=G.locs[li];
     if(ev.id==='staff_quit' && !loc.staff.length) continue;
@@ -2673,6 +2929,37 @@ function rollRandomEvents(G){
       eventQueue.push({ev:compEv, li, ctx:{}});
     }
     G.nextCompetitorAt=G.totalMonths+randInt(12,18);
+  }
+
+  // VIP patient spawning
+  if(featureUnlocked('vip_patients')){
+    if(!G.vipEventsFired) G.vipEventsFired=[];
+    outerVip: for(const loc of G.locs){
+      const li=G.locs.indexOf(loc);
+      if(!loc.vipPatients) loc.vipPatients=[];
+      for(const vip of VIP_PATIENTS){
+        if(G.vipEventsFired.includes(vip.id)) continue;
+        if(G.totalMonths<vip.triggerAt) continue;
+        if(loc.rep<vip.minRep) continue;
+        if(Math.random()>0.06) continue; // 6% chance per month once eligible
+        G.vipEventsFired.push(vip.id);
+        if(vip.specialEvent){
+          eventQueue.push({ev:{id:vip.id,type:'pos',title:`\u2B50 VIP Patient: ${vip.name}`,
+            msg:vip.specialEvent.msg, choices:vip.specialEvent.choices, effect:vip.specialEvent.effect
+          },li,ctx:{}});
+        } else {
+          const vipRef=vip; // close over
+          eventQueue.push({ev:{id:vip.id,type:'pos',title:`\u2B50 VIP Patient: ${vip.name}`,
+            msg:vip.intro,choices:()=>[{label:'Welcome them!',desc:`+$${vipRef.revenue}/mo, +${vipRef.referrals} referrals`}],
+            effect:(G2,li2)=>{
+              if(!G2.locs[li2].vipPatients) G2.locs[li2].vipPatients=[];
+              G2.locs[li2].vipPatients.push({id:vipRef.id,monthsLeft:vipRef.stayMonths,revenue:vipRef.revenue,referrals:vipRef.referrals});
+            }
+          },li,ctx:{}});
+        }
+        break outerVip; // one VIP per rollRandomEvents call
+      }
+    }
   }
 }
 
@@ -2869,7 +3156,19 @@ function checkWinLose(G){
   const activeLocs=G.locs.length;
   const minRep=Math.min(...G.locs.map(l=>l.rep));
   const minLocPts=Math.min(...G.locs.map(l=>l.patients.cash+l.patients.insured));
-  if(activeLocs>=3 && minLocPts>=250 && minRep>=90){G.gameWon=true;}
+  if(activeLocs>=3 && minLocPts>=250 && minRep>=90){
+    G.gameWon=true;
+    if(!G.winRecorded){
+      G.winRecorded=true;
+      META.gamesWon++;
+      if(G.difficulty==='hard') META.hardWins++;
+      else META.normalWins++;
+      if(G.totalMonths<=54) META.fastWins++;
+      if(!META.unlockedFeatures.includes('hard_mode')&&META.gamesWon>=1) META.unlockedFeatures.push('hard_mode');
+      if(!META.unlockedFeatures.includes('advanced_events')&&META.normalWins>=1) META.unlockedFeatures.push('advanced_events');
+      saveMeta();
+    }
+  }
 }
 
 function advanceMonth(){
@@ -3087,6 +3386,76 @@ function _advanceMonthCore(){
     }
   }
 
+  // VIP patient countdown and referral bonuses
+  if(featureUnlocked('vip_patients')){
+    for(let liV=0;liV<G.locs.length;liV++){
+      const loc=G.locs[liV];
+      if(!loc.vipPatients) continue;
+      loc.vipPatients=loc.vipPatients.filter(v=>{
+        if(typeof v==='string') return true; // legacy
+        v.monthsLeft--;
+        if(v.monthsLeft<=0){ logEv(G,'info',`VIP patient completed their care cycle.`); return false; }
+        // Referral bonus: add cash patients
+        if(v.referrals>0 && Math.random()<0.4){
+          loc.patients.cash=Math.min((loc.patients.cash||0)+Math.floor(v.referrals*0.3),(calcCapacity(G,liV).patientsMax||999));
+        }
+        return true;
+      });
+    }
+  }
+
+  // Process community outreach
+  if(G.outreach && featureUnlocked('community_outreach')){
+    const fired=[];
+    for(const o of G.outreach){
+      o.monthsLeft--;
+      if(o.monthsLeft<=0){
+        const loc=G.locs[o.li]||G.locs[0];
+        const liO=o.li;
+        if(o.tag==='screening'){
+          loc.patients.cash=Math.min((loc.patients.cash||0)+15, (calcCapacity(G,liO).patientsMax||999));
+          loc.rep=Math.min(100,loc.rep+4);
+          logEv(G,'pos',`[${loc.name}] Free screening event paid off: +15 patients, +4 rep`);
+          fired.push(true);
+        } else if(o.tag==='corporate'){
+          G.cash+=1500; loc.rep=Math.min(100,loc.rep+3);
+          if(Math.random()<0.25){
+            const nets=INSURANCE_NETWORKS.filter(n=>!G.insApproved.includes(n.id));
+            if(nets.length>0){
+              const net=nets[Math.floor(Math.random()*nets.length)];
+              G.insApproved.push(net.id);
+              logEv(G,'pos',`Corporate seminar landed group insurance contract: ${net.name} approved!`);
+            }
+          }
+          logEv(G,'pos',`[${loc.name}] Corporate seminar result: +$1,500, +3 rep`);
+          fired.push(true);
+        } else if(o.tag==='charity'){
+          loc.rep=Math.min(100,loc.rep+8);
+          if(!loc.reviews) loc.reviews=[];
+          loc.reviews.push(1); // +1 review (positive)
+          logEv(G,'pos',`[${loc.name}] Community adjustment day: +8 rep, 5\u2605 review earned`);
+          fired.push(true);
+        } else if(o.tag==='athlete_boost'){
+          const boost=Math.floor((loc.patients.cash||0)*0.25);
+          loc.patients.cash=Math.min((loc.patients.cash||0)+boost, (calcCapacity(G,liO).patientsMax||999));
+          o.duration=(o.duration||1)-1;
+          if(o.duration>0){
+            o.monthsLeft=1; // re-fire next month for remaining duration
+            fired.push(false);
+          } else {
+            logEv(G,'pos',`[${loc.name}] Sports sponsorship completed`);
+            fired.push(true);
+          }
+        } else {
+          fired.push(true);
+        }
+      } else {
+        fired.push(false);
+      }
+    }
+    G.outreach=G.outreach.filter((_,i)=>!fired[i]);
+  }
+
   // Global expenses
   const gExp=calcGlobalExpenses(G);
   G.cash-=gExp; totalExp+=gExp;
@@ -3192,6 +3561,9 @@ function _advanceMonthCore(){
   G.month=G.totalMonths%12+1;
   G.year=Math.floor(G.totalMonths/12)+1;
 
+  // DC Certifications: earn CPD hours each month
+  if(featureUnlocked('dc_certifications')) G.cpdHours=(G.cpdHours||0)+5;
+
   // ── Annual lease renewal (first month of each new year) ──
   if(G.month===1 && G.year>1){
     const rentMin={easy:0.02,normal:0.03,hard:0.06}[G.difficulty]||0.03;
@@ -3258,11 +3630,51 @@ function checkAchievements(G){
     full_team:         ()=>staffCount>=5,
     insurance_king:    ()=>(G.insApproved||[]).length>=INSURANCE_NETWORKS.length,
   };
+  // Extra meta-only achievements
+  const extraChecks={
+    speed_demon:  ()=>G.gameWon&&G.totalMonths<=54,
+    triple_crown: ()=>G.gameWon&&G.difficulty==='hard',
+  };
+  // Also add speed_demon and triple_crown to checks
+  Object.assign(checks, extraChecks);
+
   for(const a of ACHIEVEMENTS){
     if(!earned.has(a.id) && checks[a.id] && checks[a.id]()){
       G.achievements.push(a.id);
-      logEv(G,'pos',`🏆 Achievement unlocked: ${a.title}`);
+      logEv(G,'pos',`\uD83C\uDFC6 Achievement unlocked: ${a.title}`);
       showAchievementToast(a);
+    }
+  }
+  // Also check extra achievements not in ACHIEVEMENTS array
+  for(const [id,fn] of Object.entries(extraChecks)){
+    if(!earned.has(id) && fn()){
+      G.achievements.push(id);
+    }
+  }
+
+  // Sync newly earned achievements to META and check for feature unlocks
+  let newUnlockNames=[];
+  for(const id of (G.achievements||[])){
+    if(!META.totalAchievements.includes(id)){
+      META.totalAchievements.push(id);
+      for(const [feat,gate] of Object.entries(UNLOCK_GATES)){
+        if(!META.unlockedFeatures.includes(feat)&&gate()){
+          META.unlockedFeatures.push(feat);
+          newUnlockNames.push(UNLOCK_LABELS[feat]||feat);
+        }
+      }
+    }
+  }
+  if(newUnlockNames.length>0){
+    saveMeta();
+    for(const name of newUnlockNames){
+      eventQueue.push({ev:{
+        id:'feature_unlock',type:'pos',
+        title:'\uD83D\uDD13 New Feature Unlocked!',
+        msg:`**${name}** is now available in all future games!\n\nThis feature unlocked because of your growing achievement record. Start a new game to experience it.`,
+        choices:()=>[{label:'Excellent!',desc:''}],
+        effect:()=>{},
+      },li:0,ctx:{}});
     }
   }
 }
@@ -3475,6 +3887,7 @@ function renderSidebar(){
   <div class="sb-section">
     <div class="sb-title">This Month Est.</div>
     <div class="sb-row"><span class="k">Revenue</span><span class="v pos">+$${fmtN(rev)}</span></div>
+    ${(()=>{const sm=SEASONAL_MODS[G.month-1];return featureUnlocked('seasonal_patterns')&&sm.note?`<div style="font-size:10px;color:var(--amber);margin-top:4px">${sm.note}</div>`:'';})()}
     <div class="sb-row"><span class="k">Ins. Pending</span><span class="v ${insPending>0?'warn':''}" title="Insurance billed but not yet received (2-month lag)">$${fmtN(insPending)} queued</span></div>
     <div class="sb-row"><span class="k">Collections</span><span class="v ${crClass}" title="% of insurance billed that is actually paid">${Math.round(cr*100)}%${cr<0.87?' (hire front desk)':''}</span></div>
     <div class="sb-row"><span class="k">Expenses</span><span class="v neg">-$${fmtN(exp)}</span></div>
@@ -3780,6 +4193,13 @@ function renderOverview(){
     <div class="card-title">Purchase Specialty Equipment</div>
     ${EQUIPMENT_CATALOG.map(cat=>{
       const owned=loc.specialEquip.some(s=>s.id===cat.id);
+      const featureKey=cat.id==='laser'?'laser_therapy':'shockwave_therapy';
+      if(!featureUnlocked(featureKey)){
+        return `<div style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:10px;opacity:0.6;margin-bottom:6px">
+          <div style="font-size:12px;font-weight:600;color:var(--muted)">\uD83D\uDD12 ${cat.name}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:4px">Unlock: ${UNLOCK_HINTS[featureKey]}</div>
+        </div>`;
+      }
       return `<div class="field-row">
         <label>${cat.name} — $${fmtN(cat.rpv)}/session, ${Math.round(cat.baseUptake*100)}% base uptake</label>
         ${owned
@@ -3882,6 +4302,34 @@ function renderMarketing(){
     <td style="color:var(--red)">${hasMgr?'0h (mgr)':MARKETING_ACTIVITIES.socialmedia.timeHrs+'h'}</td>
     <td style="color:var(--green)">Scales with $</td></tr>`;
   html+=`</tbody></table></div>`;
+
+  // Community outreach section
+  if(featureUnlocked('community_outreach')){
+    html+=`<div class="card"><div class="card-title">Community Outreach</div>`;
+    const activeOutreach=G.outreach?G.outreach.find(o=>o.li===li):null;
+    if(activeOutreach){
+      html+=`<div style="background:var(--s2);border:1px solid var(--cyan);border-radius:6px;padding:10px;font-size:11px;color:var(--cyan)">
+        \u23F3 Outreach in progress \u2014 ${activeOutreach.monthsLeft} month(s) until payoff
+      </div>`;
+    } else {
+      html+=`<div style="display:grid;gap:6px;margin-top:8px">`;
+      for(const opt of OUTREACH_OPTIONS){
+        const canAfford=G.cash>=opt.cost;
+        html+=`<div style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-weight:600;font-size:12px">${opt.label}</span>
+            <button class="btn btn-cyan" style="font-size:10px;padding:3px 8px" onclick="startOutreach('${opt.id}',${li})" ${!canAfford?'disabled':''}>
+              ${opt.cost?`\$${fmtN(opt.cost)}`:'Free'}${opt.dcHours?` +${opt.dcHours}h`:''}
+            </button>
+          </div>
+          <div style="font-size:10px;color:var(--muted);margin-top:3px">${opt.desc}</div>
+        </div>`;
+      }
+      html+=`</div>`;
+    }
+    html+=`</div>`;
+  }
+
   return html;
 }
 
@@ -3978,7 +4426,30 @@ function renderRooms(){
       <button class="btn ${G.malpractice?'btn-success':'btn-danger'}" onclick="G.malpractice=!G.malpractice;renderTab('rooms')">${G.malpractice?'ACTIVE — Click to cancel':'INACTIVE — Click to activate'}</button>
     </div>
     ${!G.malpractice?'<div class="warn-item danger">⚠ Without malpractice insurance, a claim could be catastrophic!</div>':''}
-  </div>`;
+  </div>
+  ${(()=>{
+    if(!featureUnlocked('dc_certifications')) return '';
+    let certHtml=`<div class="card"><div class="card-title">DC Credentials</div>`;
+    certHtml+=`<div style="font-size:11px;color:var(--muted);margin-bottom:8px">CPD Hours: <b style="color:var(--cyan)">${G.cpdHours||0}</b> accumulated</div>`;
+    certHtml+=`<div style="display:grid;gap:6px">`;
+    for(const cert of DC_CERTS){
+      const earned=(G.certs||[]).includes(cert.id);
+      const canAfford=G.cash>=cert.cost;
+      const hasCPD=(G.cpdHours||0)>=cert.cpd;
+      certHtml+=`<div style="background:var(--s2);border:1px solid ${earned?'var(--green)':'var(--border)'};border-radius:6px;padding:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span style="font-weight:600;font-size:12px;color:${earned?'var(--green)':'var(--text)'}">${earned?'\u2713 ':''}${cert.label}</span>
+          ${earned?'<span style="font-size:10px;color:var(--green)">CERTIFIED</span>':`<button class="btn btn-cyan" style="font-size:10px;padding:3px 8px" onclick="buyCert('${cert.id}')" ${(!canAfford||!hasCPD)?'disabled':''}>
+            ${!hasCPD?`${cert.cpd} CPD req`:!canAfford?`\$${fmtN(cert.cost)}`:`Enroll \$${fmtN(cert.cost)}`}
+          </button>`}
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-top:3px">${cert.desc}</div>
+        ${!earned?`<div style="font-size:10px;color:${hasCPD?'var(--cyan)':'var(--amber)'}">CPD: ${G.cpdHours||0}/${cert.cpd} hours</div>`:''}
+      </div>`;
+    }
+    certHtml+=`</div></div>`;
+    return certHtml;
+  })()}`;
 }
 
 // ─── INSURANCE TAB ───
@@ -4770,6 +5241,7 @@ function showSetup(){
   document.getElementById('gameover-screen').classList.remove('active');
   document.getElementById('setup-screen').classList.add('active');
   cancelAnimationFrame(animFrame);
+  buildSetupUI(); // refresh lock states and meta display
 }
 function showGameScreen(){
   document.getElementById('setup-screen').classList.remove('active');
@@ -4795,6 +5267,12 @@ function showEndScreen(){
     <div class="stat-box"><div class="stat-val">${totalPts}</div><div class="stat-lbl">Patients</div></div>
     <div class="stat-box"><div class="stat-val">${Math.round(G.locs[0].rep)}</div><div class="stat-lbl">Reputation</div></div>
     <div class="stat-box"><div class="stat-val">Y${G.year}</div><div class="stat-lbl">Years Played</div></div>`;
+  const achCount=META.totalAchievements.length;
+  const endMetaEl=document.getElementById('end-meta');
+  if(endMetaEl) endMetaEl.innerHTML=`<div style="margin-top:12px;font-size:11px;color:var(--muted);text-align:center">
+    Career: <b style="color:var(--cyan)">${META.gamesWon}</b> wins \xB7 <b style="color:var(--cyan)">${achCount}</b> total achievements
+    ${META.gamesWon===0&&!G.gameWon?'<div style="color:var(--amber);margin-top:4px">Win once to unlock Hard Mode!</div>':''}
+  </div>`;
 }
 
 function startGame(){
@@ -4846,11 +5324,31 @@ function buildSetupUI(){
       <div class="loc-desc">${t.desc}</div>
     </div>`).join('');
   const dc=document.getElementById('diff-cards');
+  const hardUnlocked=featureUnlocked('hard_mode');
   dc.innerHTML=[{id:'easy',label:'Easy',cash:75000},{id:'normal',label:'Normal',cash:35000},{id:'hard',label:'Hard',cash:15000}]
-    .map(d=>`<div class="diff-card ${d.id===selectedDiff?'selected':''}" onclick="selectDiff('${d.id}')">
-      <div class="diff-name">${d.label}</div>
-      <div class="diff-cash">$${fmtN(d.cash)}</div>
-    </div>`).join('');
+    .map(d=>{
+      if(d.id==='hard'&&!hardUnlocked){
+        return `<div class="diff-card" style="opacity:0.5;pointer-events:none;cursor:not-allowed">
+          <div class="diff-name">\uD83D\uDD12 ${d.label}</div>
+          <div class="diff-cash">???</div>
+        </div><div style="font-size:10px;color:var(--amber);text-align:center;margin-top:2px">\uD83D\uDD12 Beat Normal mode to unlock</div>`;
+      }
+      return `<div class="diff-card ${d.id===selectedDiff?'selected':''}" onclick="selectDiff('${d.id}')">
+        <div class="diff-name">${d.label}</div>
+        <div class="diff-cash">$${fmtN(d.cash)}</div>
+      </div>`;
+    }).join('');
+
+  // Meta progress display
+  const metaEl=document.getElementById('meta-progress');
+  if(metaEl){
+    const achCount=META.totalAchievements.length;
+    const lockedCount=Object.keys(UNLOCK_GATES).filter(f=>!featureUnlocked(f)).length;
+    metaEl.innerHTML=`<div style="text-align:center;font-size:11px;color:var(--muted);margin-top:12px;padding:10px;border-top:1px solid var(--border)">
+      <b style="color:var(--cyan)">${META.gamesWon}</b> wins \xB7 <b style="color:var(--cyan)">${achCount}</b> achievements earned \xB7 <b style="color:var(--amber)">${lockedCount}</b> features still locked
+      ${META.gamesWon===0?'<div style="margin-top:4px;color:var(--amber)">\uD83D\uDD12 Beat the game to unlock Hard Mode and Advanced Events</div>':''}
+    </div>`;
+  }
 }
 function selectLoc(id){
   selectedLocTier=id;
@@ -4862,6 +5360,7 @@ function selectDiff(id){
   buildSetupUI();
 }
 window.addEventListener('load',()=>{
+  loadMeta();
   buildSetupUI();
   // Resize canvas on window resize
   window.addEventListener('resize',()=>{ if(document.getElementById('game-screen').classList.contains('active')) initCanvas(); });
