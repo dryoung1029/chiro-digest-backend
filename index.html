@@ -95,6 +95,10 @@ input[type=number]:focus{outline:none;border-color:var(--cyan)}
 .btn-danger:hover{background:var(--red)}
 .btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border2)}
 .btn-ghost:hover{color:var(--text);border-color:var(--muted)}
+.btn-secondary{background:var(--s2);color:var(--text);border:1px solid var(--border2)}
+.btn-secondary:hover{background:var(--s3)}
+.btn-warn{background:var(--amber);color:#1a1a1a}
+.btn-warn:hover{opacity:.85}
 .btn-amber{background:#7a5000;color:var(--amber)}
 .btn-amber:hover{background:#9a6800}
 .btn-cyan{background:var(--cyan2);color:#fff}
@@ -1010,6 +1014,7 @@ const ACHIEVEMENTS = [
   {id:'five_star',         icon:'🌟', title:'Five-Star Clinic',     desc:'Achieve a 4.8+ star rating'},
   {id:'community_pillar',  icon:'🏆', title:'Community Pillar',     desc:'Reach reputation 80+'},
   {id:'debt_free',         icon:'💰', title:'Debt Free',            desc:'Pay off a loan completely'},
+  {id:'student_debt_free', icon:'🎓', title:'Free at Last',         desc:'Pay off your student loans completely'},
   {id:'empire_builder',    icon:'🏢', title:'Empire Builder',       desc:'Open a second location'},
   {id:'tech_forward',      icon:'⚡', title:'Tech Forward',         desc:'Purchase specialty equipment'},
   {id:'burnout_survivor',  icon:'💪', title:'Burnout Survivor',     desc:'Recover from DC burnout'},
@@ -1123,7 +1128,7 @@ function newGame(doctorName, clinicName, tierId, difficulty, styleId){
   styleId = styleId || 'general';
   const style = PRACTICE_STYLES[styleId] || PRACTICE_STYLES.general;
   const tier = LOCATION_TIERS.find(t=>t.id===tierId)||LOCATION_TIERS[0];
-  const startCash      = {easy:75000, normal:35000, hard:35000}[difficulty]||35000;
+  const startCash      = {easy:85000, normal:45000, hard:50000}[difficulty]||45000;
   const personalFloor  = {easy:2500,  normal:4500,  hard:6000}[difficulty]||4500;
 
   G = {
@@ -1244,6 +1249,33 @@ function newGame(doctorName, clinicName, tierId, difficulty, styleId){
   if(styleId !== 'general'){
     logEv(G,'pos',`${style.icon} ${style.label}: ${style.flavor}`);
   }
+
+  // ── Student Loans (defining mechanic — every new DC starts in significant debt) ──
+  const studentDebtAmount = {easy:150000, normal:200000, hard:250000}[difficulty]||200000;
+  const studentDebtRate = {easy:0.065, normal:0.07, hard:0.075}[difficulty]||0.07;
+  G.studentLoanPlan = 'income_driven'; // start on most forgiving plan
+  G.studentLoanForbearanceUsed = 0; // months of forbearance used (cap at 12)
+  G.studentLoanInterestPaid = 0; // total interest paid to date
+  G.studentLoanOriginalPrincipal = studentDebtAmount;
+  G.studentLoansPaidOff = false;
+  G.studentLoansPaidOffMonth = -1;
+
+  // Calculate initial income-driven payment (low while income is low)
+  const initialPmt = 200; // Income-driven floor while practice is brand new
+
+  G.loans.push({
+    id: 'student_loan',
+    type: 'student',
+    name: 'Student Loans',
+    principal: studentDebtAmount,
+    balance: studentDebtAmount,
+    rate: studentDebtRate,
+    monthlyPayment: initialPmt,
+    monthsLeft: 600, // long horizon — plan determines actual payoff
+    plan: 'income_driven',
+  });
+
+  logEv(G, 'warn', `📜 You graduated with $${fmtN(studentDebtAmount)} in student loans at ${(studentDebtRate*100).toFixed(1)}% APR. You have a 6-month grace period before payments begin. Default plan: Income-Driven Repayment.`);
 
   // Feature 7: Hard mode — inherit a struggling clinic
   if(difficulty === 'hard' && styleId === 'general'){
@@ -3578,6 +3610,73 @@ function processLoans(G){
 
   // Update active loan balances
   for(const loan of G.loans){
+    // ── Special handling for student loans ──
+    if(loan.type === 'student'){
+      // 6-month grace period after graduation (real-world federal loan standard)
+      if(G.totalMonths < 6){
+        loan.monthlyPayment = 0;
+        if(G.totalMonths === 5 && !G.studentLoanGraceWarningShown){
+          G.studentLoanGraceWarningShown = true;
+          logEv(G, 'warn', '⏰ Student loan grace period ends next month. Your first payment will be due.');
+        }
+        continue;
+      }
+      if(G.totalMonths === 6 && !G.studentLoanFirstPaymentShown){
+        G.studentLoanFirstPaymentShown = true;
+        logEv(G, 'warn', `📜 Student loan grace period over. First payment of $${fmtN(loan.monthlyPayment||200)} due now (Income-Driven Repayment).`);
+      }
+      // Update monthly payment based on current plan
+      if(loan.plan === 'forbearance'){
+        // No payment — interest accrues and capitalizes monthly
+        const interest = loan.balance * loan.rate / 12;
+        loan.balance = Math.min(loan.principal * 1.5, loan.balance + interest); // cap at 150% original
+        loan.monthlyPayment = 0; // no payment shown in expenses this month
+        G.studentLoanForbearanceUsed = (G.studentLoanForbearanceUsed||0) + 1;
+        // Auto-exit forbearance after 12 months
+        if(G.studentLoanForbearanceUsed >= 12){
+          loan.plan = 'income_driven';
+          G.studentLoanPlan = 'income_driven';
+          logEv(G, 'warn', '⚠️ Student loan forbearance period exhausted (12 months). Auto-switched to Income-Driven Repayment.');
+        }
+        continue; // skip standard processing
+      } else if(loan.plan === 'income_driven'){
+        // 5% of last month's gross revenue, $300 minimum
+        const lastRev = G.lastMonthRevenue || 0;
+        // Income-driven: 3% of last month's gross revenue, $200 floor (mirrors federal IDR realism)
+        loan.monthlyPayment = Math.max(200, Math.round(lastRev * 0.03));
+      } else if(loan.plan === 'standard'){
+        // Fixed 10-year amortization
+        const r = loan.rate/12, n = 120;
+        loan.monthlyPayment = Math.round(loan.principal * r * Math.pow(1+r,n) / (Math.pow(1+r,n)-1));
+      } else if(loan.plan === 'aggressive'){
+        // 1.5× standard for fast payoff
+        const r = loan.rate/12, n = 120;
+        const stdPmt = loan.principal * r * Math.pow(1+r,n) / (Math.pow(1+r,n)-1);
+        loan.monthlyPayment = Math.round(stdPmt * 1.5);
+      }
+      // Process the payment
+      const interest = loan.balance * loan.rate / 12;
+      G.studentLoanInterestPaid = (G.studentLoanInterestPaid||0) + Math.round(interest);
+      const principalPaid = Math.max(0, loan.monthlyPayment - interest);
+      loan.balance = Math.max(0, loan.balance - principalPaid);
+      // Milestone logging
+      const halfPoint = loan.principal / 2;
+      if(!G.studentLoanHalfwayLogged && loan.balance <= halfPoint){
+        G.studentLoanHalfwayLogged = true;
+        logEv(G, 'pos', `🎯 Student loan halfway paid off! ${G.totalMonths} months in. Keep going.`);
+      }
+      if(loan.balance <= 1){
+        logEv(G, 'pos', `🎉 STUDENT LOANS PAID OFF! After ${G.totalMonths} months and $${fmtN(G.studentLoanInterestPaid||0)} in interest, you're finally debt-free.`);
+        G.studentLoansPaidOff = true;
+        G.studentLoansPaidOffMonth = G.totalMonths;
+        G.loansPaidOff = (G.loansPaidOff||0) + 1;
+        loan.balance = 0;
+        loan.monthsLeft = 0;
+      }
+      continue; // skip standard loan processing for student loans
+    }
+
+    // ── Existing standard loan processing ──
     const interest=loan.balance*loan.rate/12;
     loan.balance=Math.max(0, loan.balance-(loan.monthlyPayment-interest));
     loan.monthsLeft--;
@@ -3587,7 +3686,39 @@ function processLoans(G){
       loan.balance=0; loan.monthsLeft=0;
     }
   }
-  G.loans=G.loans.filter(l=>l.monthsLeft>0);
+  G.loans = G.loans.filter(l => l.monthsLeft > 0 || l.balance > 0);
+}
+
+function switchStudentLoanPlan(newPlan){
+  const loan = (G.loans||[]).find(l => l.type === 'student');
+  if(!loan){ showAlert('No student loan found.', 'warn'); return; }
+  if(loan.balance <= 0){ showAlert('Student loans already paid off!', 'pos'); return; }
+  if(newPlan === 'forbearance' && (G.studentLoanForbearanceUsed||0) >= 12){
+    showAlert('You\'ve already used the maximum 12 months of forbearance.', 'warn');
+    return;
+  }
+  if(loan.plan === newPlan){ showAlert(`Already on ${newPlan.replace('_',' ')} plan.`, 'info'); return; }
+
+  const planNames = {
+    income_driven: 'Income-Driven Repayment',
+    standard: 'Standard 10-Year',
+    aggressive: 'Aggressive Payoff (1.5× standard)',
+    forbearance: 'Forbearance (no payments, interest accrues)',
+  };
+
+  const planDescs = {
+    income_driven: 'Payments scale with your monthly revenue (5%, $300 min). Lowest monthly burden but slowest payoff.',
+    standard: '10-year fixed amortization. Higher monthly payment but pays off on schedule.',
+    aggressive: '50% above standard for fastest payoff and least total interest.',
+    forbearance: 'Skip payments for up to 12 months total. Interest accrues and capitalizes — significantly increases total cost.',
+  };
+
+  showConfirm(`Switch student loan to "${planNames[newPlan]}"?\n\n${planDescs[newPlan]}`, () => {
+    loan.plan = newPlan;
+    G.studentLoanPlan = newPlan;
+    logEv(G, 'info', `Student loan repayment plan changed to: ${planNames[newPlan]}`);
+    if(typeof renderTab === 'function') renderTab('rooms');
+  }, 'info');
 }
 
 function yearEndTax(G){
@@ -4013,6 +4144,7 @@ function _advanceMonthCore(){
   // Global expenses
   const gExp=calcGlobalExpenses(G);
   G.cash-=gExp; totalExp+=gExp;
+  G.lastMonthRevenue = totalRev;
   processLoans(G);
 
   // ── Owner personal expenses (always deducted, even in losing months) ──
@@ -4175,6 +4307,7 @@ function checkAchievements(G){
     five_star:         ()=>stars!==null&&stars>=4.8,
     community_pillar:  ()=>(G.locs[0]?.rep||0)>=80,
     debt_free:         ()=>(G.loansPaidOff||0)>=1,
+    student_debt_free: ()=>G.studentLoansPaidOff===true,
     empire_builder:    ()=>G.locs.length>=2,
     tech_forward:      ()=>G.locs.some(l=>l.specialEquip&&l.specialEquip.length>0),
     burnout_survivor:  ()=>(G.burnoutRecoveries||0)>=1,
@@ -5136,6 +5269,58 @@ function renderRooms(){
     }
     certHtml+=`</div></div>`;
     return certHtml;
+  })()}
+  ${(()=>{
+    // ── Personal Finances (Student Loans) ──
+    const studentLoan = (G.loans||[]).find(l => l.type === 'student');
+    if(!studentLoan) return '';
+    const pctPaid = Math.round((1 - studentLoan.balance / studentLoan.principal) * 100);
+    const planLabels = {
+      income_driven: '📊 Income-Driven',
+      standard: '📅 Standard 10-Year',
+      aggressive: '⚡ Aggressive Payoff',
+      forbearance: '⏸️ Forbearance',
+    };
+    const balColor = studentLoan.balance > studentLoan.principal * 0.75 ? 'var(--red)'
+      : studentLoan.balance > studentLoan.principal * 0.40 ? 'var(--amber)' : 'var(--green)';
+    const forbAvail = 12 - (G.studentLoanForbearanceUsed||0);
+
+    // Calculate what each plan WOULD cost monthly
+    const r = studentLoan.rate/12, n = 120;
+    const stdPmt = Math.round(studentLoan.principal * r * Math.pow(1+r,n) / (Math.pow(1+r,n)-1));
+    const aggPmt = Math.round(stdPmt * 1.5);
+    const idPmt = Math.max(300, Math.round((G.lastMonthRevenue||0) * 0.05));
+
+    return `<div class="card" style="margin-top:12px">
+      <div class="card-title">📜 Personal Finances — Student Loans</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;font-style:italic">
+        You graduated with $${fmtN(studentLoan.principal)} in chiropractic school debt. This is your reality.
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding:8px;background:var(--s2);border-radius:6px">
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase">Remaining Balance</div>
+          <div style="font-size:18px;font-weight:700;color:${balColor}">$${fmtN(Math.round(studentLoan.balance))}</div>
+          <div style="font-size:10px;color:var(--muted)">${pctPaid}% paid off · ${(studentLoan.rate*100).toFixed(2)}% APR</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase">This Month</div>
+          <div style="font-size:14px;font-weight:700;color:var(--cyan)">${planLabels[studentLoan.plan]||studentLoan.plan}</div>
+          <div style="font-size:11px;color:var(--muted)">$${fmtN(studentLoan.monthlyPayment)}/mo</div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Repayment Plan</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
+        <button class="btn ${studentLoan.plan==='income_driven'?'btn-success':'btn-secondary'}" style="font-size:10px;padding:6px"
+          onclick="switchStudentLoanPlan('income_driven')">📊 Income-Driven<br><span style="font-size:9px;font-weight:400">~$${fmtN(idPmt)}/mo · slow payoff</span></button>
+        <button class="btn ${studentLoan.plan==='standard'?'btn-success':'btn-secondary'}" style="font-size:10px;padding:6px"
+          onclick="switchStudentLoanPlan('standard')">📅 Standard<br><span style="font-size:9px;font-weight:400">$${fmtN(stdPmt)}/mo · 10 years</span></button>
+        <button class="btn ${studentLoan.plan==='aggressive'?'btn-success':'btn-secondary'}" style="font-size:10px;padding:6px"
+          onclick="switchStudentLoanPlan('aggressive')">⚡ Aggressive<br><span style="font-size:9px;font-weight:400">$${fmtN(aggPmt)}/mo · fastest</span></button>
+        <button class="btn ${studentLoan.plan==='forbearance'?'btn-warn':'btn-secondary'}" style="font-size:10px;padding:6px"
+          onclick="switchStudentLoanPlan('forbearance')" ${forbAvail<=0?'disabled':''}>⏸️ Forbearance<br><span style="font-size:9px;font-weight:400">${forbAvail} mo left · interest accrues</span></button>
+      </div>
+      <div style="font-size:10px;color:var(--muted);font-style:italic">Total interest paid so far: $${fmtN(G.studentLoanInterestPaid||0)}</div>
+    </div>`;
   })()}
   <div class="card">
     <div class="card-title">🌱 Growth Programs</div>
@@ -6160,6 +6345,16 @@ function showEndScreen(){
   else if(G.gameWon) narrative += `You built a chiropractic empire in just ${G.totalMonths} months. `;
   if(firings>0) narrative += `You let go of ${firings} staff member${firings!==1?'s':''} along the way. `;
   else narrative += 'You kept every staff member you hired. ';
+  // Student loan narrative
+  const _sl = (G.loans||[]).find(l => l.type === 'student');
+  const _slPrincipal = G.studentLoanOriginalPrincipal||0;
+  if(G.studentLoansPaidOff){
+    narrative += `🎓 You paid off your student loans in month ${G.studentLoansPaidOffMonth} — a milestone many DCs never reach. `;
+  } else if(_sl && _slPrincipal && _sl.balance > _slPrincipal * 0.5){
+    narrative += `⚠️ You finished with $${fmtN(Math.round(_sl.balance))} still owed on student loans. The debt outlasted the practice. `;
+  } else if(_sl && _sl.balance > 0){
+    narrative += `You whittled student loans down to $${fmtN(Math.round(_sl.balance))} — real progress, but not yet free. `;
+  }
   const debriefEl=document.getElementById('end-debrief');
   if(debriefEl){
     let extra='';
@@ -6187,10 +6382,16 @@ function showEndScreen(){
     debriefEl.innerHTML=`
     <div style="margin-top:16px;background:var(--s2);border:1px solid var(--border2);border-radius:8px;padding:14px">
       <div style="font-size:12px;font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Practice Report</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:10px">
         <div style="text-align:center"><div style="font-size:18px;font-weight:700;color:var(--text)">${peakPts}</div><div style="font-size:10px;color:var(--muted)">Peak Patients</div></div>
         <div style="text-align:center"><div style="font-size:18px;font-weight:700;color:${lowestMorale<40?'var(--red)':lowestMorale<60?'var(--amber)':'var(--green)'}">${lowestMorale}%</div><div style="font-size:10px;color:var(--muted)">Lowest Morale</div></div>
         <div style="text-align:center"><div style="font-size:18px;font-weight:700;color:var(--text)">${firings}</div><div style="font-size:10px;color:var(--muted)">Staff Fired</div></div>
+        ${(()=>{
+          const sl = (G.loans||[]).find(l => l.type === 'student');
+          if(G.studentLoansPaidOff) return `<div style="text-align:center"><div style="font-size:14px;font-weight:700;color:var(--green)">PAID OFF</div><div style="font-size:10px;color:var(--muted)">Debt Free in mo ${G.studentLoansPaidOffMonth}</div></div>`;
+          if(sl) return `<div style="text-align:center"><div style="font-size:14px;font-weight:700;color:var(--amber)">$${fmtN(Math.round(sl.balance))}</div><div style="font-size:10px;color:var(--muted)">Student Debt Remaining</div></div>`;
+          return `<div></div>`;
+        })()}
       </div>
       <div style="font-size:11px;color:var(--muted);line-height:1.5;font-style:italic">${narrative}</div>
     </div>${extra}`;
@@ -6212,7 +6413,7 @@ function startGame(){
   eventQueue=[];
 
   // ── Intro modal sequence ──
-  const diff={easy:'$75,000',normal:'$50,000',hard:'$35,000'}[selectedDiff]||'$50,000';
+  const diff={easy:'$85,000',normal:'$45,000',hard:'$50,000'}[selectedDiff]||'$45,000';
   const floor={easy:'$2,500',normal:'$3,500',hard:'$4,500'}[selectedDiff]||'$3,500';
 
   eventQueue.push({ev:{
@@ -6254,7 +6455,7 @@ function buildSetupUI(){
     </div>`).join('');
   const dc=document.getElementById('diff-cards');
   const hardUnlocked=featureUnlocked('hard_mode');
-  dc.innerHTML=[{id:'easy',label:'Easy',cash:75000},{id:'normal',label:'Normal',cash:35000},{id:'hard',label:'Hard',cash:35000}]
+  dc.innerHTML=[{id:'easy',label:'Easy',cash:85000},{id:'normal',label:'Normal',cash:45000},{id:'hard',label:'Hard',cash:50000}]
     .map(d=>{
       if(d.id==='hard'&&!hardUnlocked){
         return `<div class="diff-card" style="opacity:0.5;pointer-events:none;cursor:not-allowed">
