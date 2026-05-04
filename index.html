@@ -420,6 +420,14 @@ input[type=number]:focus{outline:none;border-color:var(--cyan)}
       <div class="diff-cash">$35,000</div>
     </div></div>
     </div>
+    <div class="setup-field">
+      <label>Practice Style</label>
+      <div id="style-cards"></div>
+    </div>
+    <div class="setup-field">
+      <label>Victory Paths</label>
+      <div id="winconds-info"></div>
+    </div>
     <button class="btn btn-primary btn-lg" style="width:100%;margin-top:8px" onclick="startGame()">Open Your Practice →</button>
     <div id="meta-progress"></div>
   </div>
@@ -654,14 +662,14 @@ input[type=number]:focus{outline:none;border-color:var(--cyan)}
 // ════════════════════════════════════════════════════════
 //  META-PROGRESSION (persists across games)
 // ════════════════════════════════════════════════════════
-let META={gamesWon:0,fastWins:0,normalWins:0,hardWins:0,totalAchievements:[],unlockedFeatures:[]};
+let META={gamesWon:0,fastWins:0,normalWins:0,hardWins:0,totalAchievements:[],unlockedFeatures:[],practiceStylesUnlocked:['general'],winConditionsUnlocked:['empire','specialty'],gamesWonByStyle:{general:0,sports:0,family:0,wellness:0,mill:0},winConditionsAchieved:[]};
 function loadMeta(){
   try{const s=localStorage.getItem('chiroventure_meta');
-    if(s) META=Object.assign({gamesWon:0,fastWins:0,normalWins:0,hardWins:0,totalAchievements:[],unlockedFeatures:[]},JSON.parse(s));
+    if(s) META=Object.assign({gamesWon:0,fastWins:0,normalWins:0,hardWins:0,totalAchievements:[],unlockedFeatures:[],practiceStylesUnlocked:['general'],winConditionsUnlocked:['empire','specialty'],gamesWonByStyle:{general:0,sports:0,family:0,wellness:0,mill:0},winConditionsAchieved:[]},JSON.parse(s));
   }catch(e){}
 }
 function saveMeta(){localStorage.setItem('chiroventure_meta',JSON.stringify(META));}
-function resetMeta(){META={gamesWon:0,fastWins:0,normalWins:0,hardWins:0,totalAchievements:[],unlockedFeatures:[]};saveMeta();}
+function resetMeta(){META={gamesWon:0,fastWins:0,normalWins:0,hardWins:0,totalAchievements:[],unlockedFeatures:[],practiceStylesUnlocked:['general'],winConditionsUnlocked:['empire','specialty'],gamesWonByStyle:{general:0,sports:0,family:0,wellness:0,mill:0},winConditionsAchieved:[]};saveMeta();}
 
 const UNLOCK_GATES={
   seasonal_patterns:   ()=>META.totalAchievements.includes('first_patient'),
@@ -703,6 +711,167 @@ const UNLOCK_HINTS={
   staff_partner_offer: 'Make your first hire',
 };
 function featureUnlocked(f){return UNLOCK_GATES[f]?UNLOCK_GATES[f]():true;}
+
+// ════════════════════════════════════════════════════════
+//  PRACTICE STYLES
+// ════════════════════════════════════════════════════════
+const PRACTICE_STYLES = {
+  general: {
+    id:'general', label:'General Practice', icon:'⚖️',
+    short:'Balanced gameplay',
+    desc:'A traditional chiropractic practice serving the local community. No bonuses, no penalties — the classic experience.',
+    flavor:'You hung your shingle and opened your doors. You have no specialty, no edge — just solid clinical skills and a willingness to work hard.',
+    locked:false, unlockReq:null,
+    startCertId:null, cashPriceMult:1.0, flowMult:1.0, insuredMult:1.0,
+    insuredCapRatio:1.0, cashCapRatio:1.0, insuranceMonthsPenalty:0,
+    repStartBonus:0, repCap:100, rentMult:1.0, moraleBaseShift:0,
+    startUpgrades:[], startNetworks:[], startCash:0, preferredWin:'empire',
+  },
+  sports: {
+    id:'sports', label:'Sports Medicine', icon:'🏃',
+    short:'Premium athletes, slower insurance',
+    desc:'Practice serving athletes, weekend warriors, and active professionals. Premium cash pricing, but insurance is slower to onboard.',
+    flavor:"You're the doc athletes call. Marathon runners, weekend warriors, the local high school football team — they all come to you. Premium pricing, premium expectations.",
+    locked:true, unlockReq:'first_win',
+    startCertId:'sports_chiro', cashPriceMult:1.30, flowMult:0.90, insuredMult:0.85,
+    insuredCapRatio:1.0, cashCapRatio:1.0, insuranceMonthsPenalty:2,
+    repStartBonus:5, repCap:100, rentMult:1.0, moraleBaseShift:0,
+    startUpgrades:[], startNetworks:[], startCash:0, preferredWin:'specialty',
+  },
+  family: {
+    id:'family', label:'Family Practice', icon:'👨‍👩‍👧',
+    short:'High volume, lower margins',
+    desc:'Family-focused practice serving multiple generations. Higher patient flow, but margins are tighter.',
+    flavor:"Three generations come through your doors. Grandma's arthritis, Mom's back, the kids' growing pains. The waiting room is always busy.",
+    locked:true, unlockReq:'first_win',
+    startCertId:'pediatric', cashPriceMult:0.85, flowMult:1.30, insuredMult:1.10,
+    insuredCapRatio:1.0, cashCapRatio:1.0, insuranceMonthsPenalty:0,
+    repStartBonus:0, repCap:100, rentMult:1.0, moraleBaseShift:-3,
+    startUpgrades:['kids_corner'], startNetworks:[], startCash:0, preferredWin:'volume',
+  },
+  wellness: {
+    id:'wellness', label:'Wellness Boutique', icon:'🌿',
+    short:'Premium pricing, low volume',
+    desc:'Concierge wellness practice. High prices, beautiful space, refined clientele — but a small patient base by design.',
+    flavor:'Polished hardwood floors, ambient music, eucalyptus in the air. Your patients drive Teslas and pay cash. They expect excellence.',
+    locked:true, unlockReq:'win_with_sports_or_family',
+    startCertId:null, cashPriceMult:1.60, flowMult:0.55, insuredMult:0.0,
+    insuredCapRatio:0.0, cashCapRatio:1.0, insuranceMonthsPenalty:0,
+    repStartBonus:15, repCap:100, rentMult:1.50, moraleBaseShift:5,
+    startUpgrades:['decor','music','plants'], startNetworks:[], startCash:0, preferredWin:'specialty',
+  },
+  mill: {
+    id:'mill', label:'Insurance Mill', icon:'📋',
+    short:'High volume insured, rep ceiling',
+    desc:'High-volume insurance-focused practice. Two networks pre-approved, lots of insured patients — but reputation has a hard ceiling.',
+    flavor:'You took the contracts everyone else turned down. The waiting room is full of HMO patients, the billing system never stops, and the margins are razor-thin. Volume is everything.',
+    locked:true, unlockReq:'win_with_wellness_or_hard',
+    startCertId:null, cashPriceMult:0.80, flowMult:1.15, insuredMult:1.50,
+    insuredCapRatio:1.0, cashCapRatio:0.30, insuranceMonthsPenalty:0,
+    repStartBonus:0, repCap:80, rentMult:0.85, moraleBaseShift:-5,
+    startUpgrades:['checkin'], startNetworks:['meridian','govcare'], startCash:5000, preferredWin:'volume',
+  },
+};
+
+// ════════════════════════════════════════════════════════
+//  WIN CONDITIONS
+// ════════════════════════════════════════════════════════
+const WIN_CONDITIONS = {
+  empire: {
+    id:'empire', label:'Build a Chiropractic Empire', icon:'🏛️',
+    desc:'Operate 3 locations, each with 250+ patients and 90+ reputation.',
+    locked:false,
+    check:(G)=>G.locs.length>=3 &&
+      Math.min(...G.locs.map(l=>l.patients.cash+l.patients.insured))>=250 &&
+      Math.min(...G.locs.map(l=>l.rep))>=90,
+  },
+  specialty: {
+    id:'specialty', label:'Specialty Excellence', icon:'🌟',
+    desc:'Build a single boutique location to legendary status: 200+ patients, 100 reputation, and 3+ certifications.',
+    locked:false,
+    check:(G)=>G.locs.length>=1 &&
+      (G.locs[0].patients.cash+G.locs[0].patients.insured)>=200 &&
+      G.locs[0].rep>=100 &&
+      (G.certs||[]).length>=3,
+  },
+  volume: {
+    id:'volume', label:'Volume Empire', icon:'📈',
+    desc:'Operate 2+ locations totaling 1500+ patients, with 80+ reputation at every location.',
+    locked:true, unlockReq:'first_win',
+    check:(G)=>G.locs.length>=2 &&
+      G.locs.reduce((s,l)=>s+l.patients.cash+l.patients.insured,0)>=1500 &&
+      Math.min(...G.locs.map(l=>l.rep))>=80,
+  },
+  industry: {
+    id:'industry', label:'Industry Leader', icon:'🎓',
+    desc:'Earn all 5 DC certifications and run a Research Fellowship for 24 cumulative months.',
+    locked:true, unlockReq:'first_win',
+    check:(G)=>(G.certs||[]).length>=5 && (G.totalFellowshipMonths||0)>=24,
+  },
+  community: {
+    id:'community', label:'Community Pillar', icon:'🤝',
+    desc:'Complete 30 community outreach actions, earn 3 community awards, and reach 90+ reputation at every location.',
+    locked:true, unlockReq:'community_pillar_achievement',
+    check:(G)=>(G.outreachCompletedCount||0)>=30 &&
+      (G.communityAwards||0)>=3 &&
+      G.locs.length>=1 &&
+      Math.min(...G.locs.map(l=>l.rep))>=90,
+  },
+};
+
+function checkUnlocks(){
+  const newlyUnlocked = [];
+  if(!META.practiceStylesUnlocked) META.practiceStylesUnlocked = ['general'];
+  if(!META.winConditionsUnlocked) META.winConditionsUnlocked = ['empire','specialty'];
+  if(!META.gamesWonByStyle) META.gamesWonByStyle = {general:0,sports:0,family:0,wellness:0,mill:0};
+  if(!META.winConditionsAchieved) META.winConditionsAchieved = [];
+
+  if(META.gamesWon >= 1){
+    for(const id of ['sports','family']){
+      if(!META.practiceStylesUnlocked.includes(id)){
+        META.practiceStylesUnlocked.push(id);
+        newlyUnlocked.push(`Practice Style: ${PRACTICE_STYLES[id].label}`);
+      }
+    }
+    for(const id of ['volume','industry']){
+      if(!META.winConditionsUnlocked.includes(id)){
+        META.winConditionsUnlocked.push(id);
+        newlyUnlocked.push(`Win Condition: ${WIN_CONDITIONS[id].label}`);
+      }
+    }
+  }
+  if(((META.gamesWonByStyle||{}).sports||0) > 0 || ((META.gamesWonByStyle||{}).family||0) > 0){
+    if(!META.practiceStylesUnlocked.includes('wellness')){
+      META.practiceStylesUnlocked.push('wellness');
+      newlyUnlocked.push(`Practice Style: ${PRACTICE_STYLES.wellness.label}`);
+    }
+  }
+  if(((META.gamesWonByStyle||{}).wellness||0) > 0 || (META.hardWins||0) > 0){
+    if(!META.practiceStylesUnlocked.includes('mill')){
+      META.practiceStylesUnlocked.push('mill');
+      newlyUnlocked.push(`Practice Style: ${PRACTICE_STYLES.mill.label}`);
+    }
+  }
+  if((META.totalAchievements||[]).includes('community_pillar')){
+    if(!META.winConditionsUnlocked.includes('community')){
+      META.winConditionsUnlocked.push('community');
+      newlyUnlocked.push(`Win Condition: ${WIN_CONDITIONS.community.label}`);
+    }
+  }
+  saveMeta();
+  return newlyUnlocked;
+}
+
+function unlockReqText(req){
+  switch(req){
+    case 'first_win': return 'Win any game';
+    case 'win_with_sports_or_family': return 'Win with Sports or Family practice';
+    case 'win_with_wellness_or_hard': return 'Win with Wellness practice or any Hard mode game';
+    case 'community_pillar_achievement': return 'Earn the Community Pillar achievement';
+    default: return 'Unknown';
+  }
+}
+
 // ════════════════════════════════════════════════════════
 //  HELPERS
 // ════════════════════════════════════════════════════════
@@ -917,6 +1086,7 @@ function associateEfficiency(s, totalMonths){
 let G = {};
 let selectedLocTier = 'small';
 let selectedDiff = 'normal';
+let selectedStyle = 'general';
 let currentTab = 'overview';
 let selectedLoc = 0;   // which location the player is managing
 let eventQueue = [];
@@ -949,9 +1119,11 @@ function newLoc(id, name, tier, tierId){
   };
 }
 
-function newGame(doctorName, clinicName, tierId, difficulty){
+function newGame(doctorName, clinicName, tierId, difficulty, styleId){
+  styleId = styleId || 'general';
+  const style = PRACTICE_STYLES[styleId] || PRACTICE_STYLES.general;
   const tier = LOCATION_TIERS.find(t=>t.id===tierId)||LOCATION_TIERS[0];
-  const startCash      = {easy:75000, normal:35000, hard:25000}[difficulty]||35000;
+  const startCash      = {easy:75000, normal:35000, hard:35000}[difficulty]||35000;
   const personalFloor  = {easy:2500,  normal:4500,  hard:6000}[difficulty]||4500;
 
   G = {
@@ -1040,8 +1212,41 @@ function newGame(doctorName, clinicName, tierId, difficulty){
   logEv(G,'info',`Starting location: ${tier.name} — ${tier.rooms} rooms, $${fmtN(tier.rent)}/mo rent`);
   logEv(G,'info',`Welcome, Dr. ${doctorName}! Your practice is open. Time to build something great.`);
 
+  // ── Practice Style application ──
+  G.practiceStyle = styleId;
+  G.winCondition = null;
+  G.totalFellowshipMonths = 0;
+  G.outreachCompletedCount = 0;
+  G.communityAwards = 0;
+  G.cash += style.startCash||0;
+  if(style.startCertId){
+    if(!G.certs) G.certs = [];
+    if(!G.certs.includes(style.startCertId)) G.certs.push(style.startCertId);
+    const cert=DC_CERTS.find(c=>c.id===style.startCertId);
+    logEv(G,'pos',`Starting certification: ${cert?cert.label:style.startCertId}`);
+  }
+  if(style.startUpgrades && style.startUpgrades.length>0){
+    if(!G.locs[0].upgrades) G.locs[0].upgrades = [];
+    for(const upgId of style.startUpgrades) G.locs[0].upgrades.push(upgId);
+    logEv(G,'pos',`Starting upgrades installed: ${style.startUpgrades.length} included with practice style`);
+  }
+  G.locs[0].rep += style.repStartBonus||0;
+  G.locs[0].rent = Math.round(G.locs[0].rent * (style.rentMult||1));
+  if(style.startNetworks && style.startNetworks.length>0){
+    for(const netId of style.startNetworks){
+      if(!G.insApproved.includes(netId)){
+        G.insApproved.push(netId);
+        G.insApprovedMonth[netId] = 0;
+      }
+    }
+    logEv(G,'pos',`Pre-approved insurance: ${style.startNetworks.length} network(s)`);
+  }
+  if(styleId !== 'general'){
+    logEv(G,'pos',`${style.icon} ${style.label}: ${style.flavor}`);
+  }
+
   // Feature 7: Hard mode — inherit a struggling clinic
-  if(difficulty === 'hard'){
+  if(difficulty === 'hard' && styleId === 'general'){
     const loc0 = G.locs[0];
     loc0.patients.cash = 22;
     loc0.patients.insured = 18;
@@ -1058,13 +1263,13 @@ function newGame(doctorName, clinicName, tierId, difficulty){
     const fdId = 'staff_inherited_fd';
     G.staffPool[fdId] = {
       id: fdId, name: 'Alex (Inherited)', role: 'frontdesk',
-      salary: 2800, morale: 38, hiredMonth: -6,
+      salary: 2200, morale: 38, hiredMonth: -6,
       traits: [], isOwner: false, locId: 0,
     };
     loc0.staff.push(fdId);
     G.loans.push({
-      id: 'loan_inherited', amount: 18000, remaining: 18000,
-      monthlyPayment: 500, rate: 0.08, name: 'Practice Acquisition Loan'
+      id: 'loan_inherited', amount: 12000, remaining: 12000,
+      monthlyPayment: 350, rate: 0.07, name: 'Practice Acquisition Loan'
     });
     logEv(G,'warn','You\'ve taken over a struggling practice. Rep is low, equipment is worn, and the front desk staff is demoralized. Turn it around.');
   }
@@ -2032,9 +2237,9 @@ const RANDOM_EVENTS = [
      if(ctx.choice===0){
        const o=rollOutcome([
          {w:0.45,good:true,msg:'You won! Coverage in local paper + social media. +15 new patients, reputation +10!',
-          fn:()=>{G.locs[li].bonusLeads=(G.locs[li].bonusLeads||0)+15;G.locs[li].rep=Math.min(100,G.locs[li].rep+10);}},
+          fn:()=>{G.locs[li].bonusLeads=(G.locs[li].bonusLeads||0)+15;G.locs[li].rep=Math.min(100,G.locs[li].rep+10);G.communityAwards=(G.communityAwards||0)+1;}},
          {w:0.35,good:true,msg:'Runner-up — still featured in coverage. +7 new patients, reputation +4.',
-          fn:()=>{G.locs[li].bonusLeads=(G.locs[li].bonusLeads||0)+7;G.locs[li].rep=Math.min(100,G.locs[li].rep+4);}},
+          fn:()=>{G.locs[li].bonusLeads=(G.locs[li].bonusLeads||0)+7;G.locs[li].rep=Math.min(100,G.locs[li].rep+4);G.communityAwards=(G.communityAwards||0)+1;}},
          {w:0.20,neutral:true,msg:'Not selected this year, but your name got in front of the community. Reputation +1.',
           fn:()=>{G.locs[li].rep=Math.min(100,G.locs[li].rep+1);}},
        ]);
@@ -2507,12 +2712,14 @@ function calcMarketingLeads(G, li){
 function calcPatientFlow(G, li){
   const loc = G.locs[li];
   const cap = calcCapacity(G, li);
+  const styleObj = PRACTICE_STYLES[G.practiceStyle] || PRACTICE_STYLES.general;
 
   // Difficulty market-size modifier — harder = smaller addressable market
   const diffMult={easy:1.10,normal:0.92,hard:0.78}[G.difficulty]||0.92;
 
   // ── Cash-pay new patients (from marketing) ──
   let newCash = calcMarketingLeads(G, li);
+  newCash *= (styleObj.flowMult||1.0);
 
   // Feature 3: Soft launch — new locations ramp up over 2 months
   if((loc.softLaunchMonthsLeft||0) > 0) newCash *= 0.5;
@@ -2571,6 +2778,7 @@ function calcPatientFlow(G, li){
     let newReferrals=net.ppm*repFactor*randF(0.8,1.2)*SEASONAL_FACTORS[G.month-1];
     if(net.govcare) newReferrals*=2; // GovCare patients seek care more actively
     newReferrals*=diffMult; // difficulty market-size modifier
+    newReferrals*=(styleObj.insuredMult||1.0);
     newReferrals*=womBonus; // word-of-mouth bonus from high reputation
     if(loc.competitorMonths>0) newReferrals*=0.85;
     // Seasonal modifier for insurance referrals
@@ -2658,6 +2866,25 @@ function calcPatientFlow(G, li){
 
   loc.patients.cash=Math.max(0,newCashTotal);
   loc.patients.insured=Math.max(0,survivedInsured);
+
+  // ── Practice style: enforce patient mix caps ──
+  const totalAfter = loc.patients.cash + loc.patients.insured;
+  if(styleObj.insuredCapRatio < 1.0 && totalAfter > 0){
+    const maxInsured = Math.floor(totalAfter * styleObj.insuredCapRatio);
+    if(loc.patients.insured > maxInsured){
+      const overflow = loc.patients.insured - maxInsured;
+      loc.patients.insured = maxInsured;
+      loc.patients.cash += Math.floor(overflow * 0.3);
+    }
+  }
+  if(styleObj.cashCapRatio < 1.0 && totalAfter > 0){
+    const maxCash = Math.floor(totalAfter * styleObj.cashCapRatio);
+    if(loc.patients.cash > maxCash){
+      const overflow = loc.patients.cash - maxCash;
+      loc.patients.cash = maxCash;
+      loc.patients.insured += Math.floor(overflow * 0.5);
+    }
+  }
   return {newCash:Math.round(newCash),newInsured:totalNewInsured,total:totalPatients};
 }
 
@@ -2789,7 +3016,8 @@ function calcInsRevenue(G, li){
 
 function calcRevenue(G, li){
   const loc = G.locs[li];
-  const price = loc.decisions.cashPrice||65;
+  const styleCashMult = (PRACTICE_STYLES[G.practiceStyle]||PRACTICE_STYLES.general).cashPriceMult||1.0;
+  const price = (loc.decisions.cashPrice||65) * styleCashMult;
   // Sports chiro cert: +15% RPV on all active patients
   const sportsMult=(featureUnlocked('dc_certifications')&&(G.certs||[]).includes('sports_chiro'))?1.15:1.0;
   let rev = 0;
@@ -3020,6 +3248,9 @@ function updateReputation(G, li){
     loc.rep+=fdRepDelta;
   }
   loc.rep=clamp(loc.rep,0,100);
+  // Practice style rep cap (e.g. mill caps at 80)
+  const repCap = (PRACTICE_STYLES[G.practiceStyle]||PRACTICE_STYLES.general).repCap||100;
+  if(loc.rep > repCap) loc.rep = repCap;
 }
 
 function generateReviews(G, li){
@@ -3400,22 +3631,42 @@ function checkWinLose(G){
   if(G.licenseSuspended){G.gameOver=true;G.gameOverReason='license';return;}
   // Lose: 72-month time limit (6 years to build empire)
   if(G.totalMonths>=72){G.gameOver=true;G.gameOverReason='timeout';return;}
-  // Win: 3 locations, ≥250 patients at each, rep ≥88 everywhere
-  const activeLocs=G.locs.length;
-  const minRep=Math.min(...G.locs.map(l=>l.rep));
-  const minLocPts=Math.min(...G.locs.map(l=>l.patients.cash+l.patients.insured));
-  if(activeLocs>=3 && minLocPts>=250 && minRep>=90){
-    G.gameWon=true;
-    if(!G.winRecorded){
-      G.winRecorded=true;
-      META.gamesWon++;
-      if(G.difficulty==='hard') META.hardWins++;
-      else META.normalWins++;
-      if(G.totalMonths<=54) META.fastWins++;
-      if(!META.unlockedFeatures.includes('hard_mode')&&META.gamesWon>=1) META.unlockedFeatures.push('hard_mode');
-      if(!META.unlockedFeatures.includes('advanced_events')&&META.normalWins>=1) META.unlockedFeatures.push('advanced_events');
-      saveMeta();
+  // Win: check all unlocked win conditions
+  if(!G.gameOver && !G.gameWon){
+    const wcList = (META.winConditionsUnlocked && META.winConditionsUnlocked.length) ? META.winConditionsUnlocked : ['empire','specialty'];
+    for(const wcId of wcList){
+      const wc = WIN_CONDITIONS[wcId];
+      if(wc && wc.check(G)){
+        G.gameWon = true;
+        G.gameOverReason = wcId;
+        G.winCondition = wcId;
+        logEv(G,'pos',`🏆 Win condition achieved: ${wc.label}!`);
+        break;
+      }
     }
+  }
+  if(G.gameWon && !G.winRecorded){
+    G.winRecorded=true;
+    META.gamesWon++;
+    if(G.difficulty==='hard') META.hardWins++;
+    else META.normalWins++;
+    if(G.totalMonths<=54) META.fastWins++;
+    if(!META.unlockedFeatures.includes('hard_mode')&&META.gamesWon>=1) META.unlockedFeatures.push('hard_mode');
+    if(!META.unlockedFeatures.includes('advanced_events')&&META.normalWins>=1) META.unlockedFeatures.push('advanced_events');
+    // Track win by style
+    if(G.practiceStyle){
+      if(!META.gamesWonByStyle) META.gamesWonByStyle={general:0,sports:0,family:0,wellness:0,mill:0};
+      META.gamesWonByStyle[G.practiceStyle] = (META.gamesWonByStyle[G.practiceStyle]||0) + 1;
+    }
+    // Track win condition
+    if(G.winCondition){
+      if(!META.winConditionsAchieved) META.winConditionsAchieved=[];
+      if(!META.winConditionsAchieved.includes(G.winCondition)) META.winConditionsAchieved.push(G.winCondition);
+    }
+    saveMeta();
+    // Check for new unlocks
+    const newUnlocks = checkUnlocks();
+    if(newUnlocks.length > 0) G.newUnlocksThisGame = newUnlocks;
   }
 }
 
@@ -3507,6 +3758,7 @@ function _advanceMonthCore(){
     if(loc.fellowshipActive && (G.certs||[]).length > 0){
       G.cash -= 2500;
       loc.rep = Math.min(100, loc.rep + 0.4);
+      G.totalFellowshipMonths = (G.totalFellowshipMonths||0) + 1;
     }
 
     // Feature 3: Soft launch countdown
@@ -3669,6 +3921,10 @@ function _advanceMonthCore(){
       if(o.monthsLeft<=0){
         const loc=G.locs[o.li]||G.locs[0];
         const liO=o.li;
+        // Track outreach completion (only count first completion of athlete_boost, not each month)
+        if(o.tag!=='athlete_boost' || (o.duration||1)<=1){
+          G.outreachCompletedCount = (G.outreachCompletedCount||0) + 1;
+        }
         if(o.tag==='screening'){
           loc.patients.cash=Math.min((loc.patients.cash||0)+15, (calcCapacity(G,liO).patientsMax||999));
           loc.rep=Math.min(100,loc.rep+4);
@@ -5308,7 +5564,8 @@ function hireStaff(role,li){
   const info=STAFF_TYPES[role];
   const name=randomDCName(role);
   const id='s'+G.nextStaffId++;
-  G.staffPool[id]={id,name,role,salary:info.salary,morale:75,locId:li,hiredMonth:G.totalMonths};
+  const moraleBase = clamp(75 + ((PRACTICE_STYLES[G.practiceStyle]||PRACTICE_STYLES.general).moraleBaseShift||0), 30, 100);
+  G.staffPool[id]={id,name,role,salary:info.salary,morale:moraleBase,locId:li,hiredMonth:G.totalMonths};
   G.locs[li].staff.push(id);
   G.hiresThisMonth=(G.hiresThisMonth||0)+1;
   logEv(G,'info',`Hired ${name} as ${info.label} — $${fmtN(info.salary)}/mo`);
@@ -5426,7 +5683,8 @@ function applyInsurance(netId){
     return;
   }
   const net=INSURANCE_NETWORKS.find(n=>n.id===netId);
-  const wait=randInt(net.waitMin,net.waitMax);
+  const stylePenalty=(PRACTICE_STYLES[G.practiceStyle]||PRACTICE_STYLES.general).insuranceMonthsPenalty||0;
+  const wait=randInt(net.waitMin,net.waitMax)+stylePenalty;
   G.insApps.push({networkId:netId,approveAt:G.totalMonths+wait});
   G.insAppliedThisMonth=true;
   logEv(G,'info',`Applied to ${net.name} — expected approval in ~${wait} months`);
@@ -5873,9 +6131,12 @@ function showEndScreen(){
   const box=document.getElementById('end-box');
   const totalPts=G.locs.reduce((s,l)=>s+l.patients.cash+l.patients.insured,0);
   box.className='end-box '+(G.gameWon?'win':'lose');
-  document.getElementById('end-title').textContent=G.gameWon?'🏆 Practice Empire Built!':(G.gameOverReason==='timeout'?'⏰ Time\'s Up!':'💸 Practice Closed');
+  const winTitle = G.gameWon && G.winCondition && WIN_CONDITIONS[G.winCondition]
+    ? `${WIN_CONDITIONS[G.winCondition].icon} ${WIN_CONDITIONS[G.winCondition].label}!`
+    : '🏆 Practice Empire Built!';
+  document.getElementById('end-title').textContent=G.gameWon?winTitle:(G.gameOverReason==='timeout'?'⏰ Time\'s Up!':'💸 Practice Closed');
   document.getElementById('end-msg').textContent=G.gameWon
-    ?`Dr. ${G.doctorName}, you've built a thriving chiropractic empire! Your ${G.locs.length} locations serve ${totalPts} patients with a stellar reputation.`
+    ?`Dr. ${G.doctorName}, you've built a thriving chiropractic practice! Your ${G.locs.length} location${G.locs.length!==1?'s':''} serve ${totalPts} patients.`
     :{bankrupt:`Dr. ${G.doctorName}, your practice has run out of funds. The bank has taken over.`,
       license:`Dr. ${G.doctorName}, your license has been suspended.`,
       timeout:`Dr. ${G.doctorName}, you ran out of time. The 6-year window to build your empire has closed. You'll need to move faster next time.`}[G.gameOverReason]||'Game over.';
@@ -5901,6 +6162,28 @@ function showEndScreen(){
   else narrative += 'You kept every staff member you hired. ';
   const debriefEl=document.getElementById('end-debrief');
   if(debriefEl){
+    let extra='';
+    // Win condition card
+    if(G.gameWon && G.winCondition && WIN_CONDITIONS[G.winCondition]){
+      const wc=WIN_CONDITIONS[G.winCondition];
+      extra += `<div style="margin-top:12px;background:var(--s2);border:2px solid var(--cyan);border-radius:8px;padding:14px;text-align:center">
+        <div style="font-size:13px;font-weight:700;color:var(--cyan);margin-bottom:4px">🏆 VICTORY PATH</div>
+        <div style="font-size:16px;font-weight:700">${wc.icon} ${wc.label}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">${wc.desc}</div>
+      </div>`;
+    }
+    // Practice style played
+    if(G.practiceStyle && G.practiceStyle !== 'general' && PRACTICE_STYLES[G.practiceStyle]){
+      const ps=PRACTICE_STYLES[G.practiceStyle];
+      extra += `<div style="margin-top:10px;font-size:12px;color:var(--muted);text-align:center">Played as: <b style="color:var(--text)">${ps.icon} ${ps.label}</b></div>`;
+    }
+    // Newly unlocked content
+    if(G.newUnlocksThisGame && G.newUnlocksThisGame.length > 0){
+      extra += `<div style="margin-top:12px;background:var(--s2);border:1px solid var(--amber);border-radius:8px;padding:14px">
+        <div style="font-size:13px;font-weight:700;color:var(--amber);margin-bottom:6px">🎉 NEW UNLOCKS</div>
+        ${G.newUnlocksThisGame.map(u=>`<div style="font-size:12px;margin:3px 0">⭐ ${u}</div>`).join('')}
+      </div>`;
+    }
     debriefEl.innerHTML=`
     <div style="margin-top:16px;background:var(--s2);border:1px solid var(--border2);border-radius:8px;padding:14px">
       <div style="font-size:12px;font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Practice Report</div>
@@ -5910,7 +6193,7 @@ function showEndScreen(){
         <div style="text-align:center"><div style="font-size:18px;font-weight:700;color:var(--text)">${firings}</div><div style="font-size:10px;color:var(--muted)">Staff Fired</div></div>
       </div>
       <div style="font-size:11px;color:var(--muted);line-height:1.5;font-style:italic">${narrative}</div>
-    </div>`;
+    </div>${extra}`;
   }
 
   const achCount=META.totalAchievements.length;
@@ -5924,7 +6207,7 @@ function showEndScreen(){
 function startGame(){
   const name=document.getElementById('setup-name').value.trim()||'Smith';
   const clinic=document.getElementById('setup-clinic').value.trim()||'Wellness Chiropractic';
-  newGame(name,clinic,selectedLocTier,selectedDiff);
+  newGame(name,clinic,selectedLocTier,selectedDiff,selectedStyle);
   currentTab='overview';
   eventQueue=[];
 
@@ -5971,7 +6254,7 @@ function buildSetupUI(){
     </div>`).join('');
   const dc=document.getElementById('diff-cards');
   const hardUnlocked=featureUnlocked('hard_mode');
-  dc.innerHTML=[{id:'easy',label:'Easy',cash:75000},{id:'normal',label:'Normal',cash:35000},{id:'hard',label:'Hard',cash:25000}]
+  dc.innerHTML=[{id:'easy',label:'Easy',cash:75000},{id:'normal',label:'Normal',cash:35000},{id:'hard',label:'Hard',cash:35000}]
     .map(d=>{
       if(d.id==='hard'&&!hardUnlocked){
         return `<div class="diff-card" style="opacity:0.5;pointer-events:none;cursor:not-allowed">
@@ -5986,6 +6269,41 @@ function buildSetupUI(){
         ${hardFlavorText}
       </div>`;
     }).join('');
+
+  // Practice Style picker
+  const styleEl=document.getElementById('style-cards');
+  if(styleEl){
+    const unlockedStyles = META.practiceStylesUnlocked || ['general'];
+    if(!unlockedStyles.includes(selectedStyle)) selectedStyle = 'general';
+    styleEl.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        ${Object.values(PRACTICE_STYLES).map(s=>{
+          const unlocked = unlockedStyles.includes(s.id);
+          const selected = s.id === selectedStyle;
+          return `
+            <div onclick="${unlocked?`selectStyle('${s.id}')`:''}"
+                 style="padding:10px;border:2px solid ${selected?'var(--cyan)':'var(--border2)'};border-radius:6px;cursor:${unlocked?'pointer':'not-allowed'};opacity:${unlocked?1:0.4};background:${selected?'var(--s2)':'var(--s1)'}">
+              <div style="font-size:14px;font-weight:700">${s.icon} ${s.label}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:3px">${s.short}</div>
+              ${!unlocked?`<div style="font-size:10px;color:var(--amber);margin-top:5px">🔒 Unlock: ${unlockReqText(s.unlockReq)}</div>`:''}
+            </div>`;
+        }).join('')}
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px;font-style:italic">${PRACTICE_STYLES[selectedStyle]?.desc||''}</div>
+    `;
+  }
+
+  // Win conditions info
+  const wcEl=document.getElementById('winconds-info');
+  if(wcEl){
+    const wcUnlocked = META.winConditionsUnlocked || ['empire','specialty'];
+    wcEl.innerHTML = `<div style="font-size:11px;color:var(--muted);padding:8px;border:1px solid var(--border2);border-radius:6px;background:var(--s1)">
+      ${wcUnlocked.map(id=>{
+        const w=WIN_CONDITIONS[id];
+        return w?`<div style="margin:4px 0"><b style="color:var(--cyan)">${w.icon} ${w.label}</b> — ${w.desc}</div>`:'';
+      }).join('')}
+    </div>`;
+  }
 
   // Meta progress display
   const metaEl=document.getElementById('meta-progress');
@@ -6005,6 +6323,11 @@ function selectLoc(id){
 }
 function selectDiff(id){
   selectedDiff=id;
+  buildSetupUI();
+}
+function selectStyle(id){
+  if(!(META.practiceStylesUnlocked||['general']).includes(id)) return;
+  selectedStyle=id;
   buildSetupUI();
 }
 window.addEventListener('load',()=>{
