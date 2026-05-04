@@ -377,7 +377,7 @@ input[type=number]:focus{outline:none;border-color:var(--cyan)}
 <body data-new-gr-c-s-check-loaded="14.1280.0" data-gr-ext-installed="">
 
 <!-- ═══ SETUP SCREEN ═══ -->
-<div id="setup-screen" class="">
+<div id="setup-screen" class="active">
   <div class="setup-box">
     <h1>⚕ CHIROVENTURE</h1>
     <p class="tagline">Build your chiropractic empire from the ground up</p>
@@ -438,7 +438,7 @@ input[type=number]:focus{outline:none;border-color:var(--cyan)}
 </div>
 
 <!-- ═══ GAME SCREEN ═══ -->
-<div id="game-screen" class="active">
+<div id="game-screen" class="">
   <header id="hdr">
     <div class="clinic-name" id="hdr-clinic">Wellness Chiropractic</div>
     <div class="hdr-stat">
@@ -6536,6 +6536,18 @@ window.addEventListener('load',()=>{
   buildSetupUI();
   // Resize canvas on window resize
   window.addEventListener('resize',()=>{ if(document.getElementById('game-screen').classList.contains('active')) initCanvas(); });
+  // Show "unsaved changes" prompt and auto-save when closing tab mid-game
+  window.addEventListener('beforeunload',(e)=>{
+    const gameActive=document.getElementById('game-screen').classList.contains('active');
+    if(gameActive && G && !G.gameOver && !G.gameWon){
+      // Auto-save so progress is recoverable via Load button
+      try{ localStorage.setItem('chiroventure_save',JSON.stringify(G)); }catch(err){}
+      // Trigger browser's native "leave site?" confirmation
+      e.preventDefault();
+      e.returnValue=''; // required for Chrome
+      return ''; // required for some older browsers
+    }
+  });
 });
 </script>
 
