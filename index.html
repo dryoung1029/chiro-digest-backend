@@ -434,6 +434,10 @@ input[type=number]:focus{outline:none;border-color:var(--cyan)}
     </div>
     <button class="btn btn-primary btn-lg" style="width:100%;margin-top:8px" onclick="startGame()">Open Your Practice →</button>
     <div id="meta-progress"></div>
+    <div style="margin-top:24px;padding-top:12px;border-top:1px solid var(--border2);display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <button class="btn btn-ghost" style="font-size:11px;padding:6px 10px" onclick="loadGame()">📂 Load Saved Game</button>
+      <button class="btn btn-ghost" style="font-size:10px;padding:5px 8px;color:var(--red);border-color:var(--red2)" onclick="resetAllProgress()">⚠ Reset All Progress (Debug)</button>
+    </div>
   </div>
 </div>
 
@@ -6435,6 +6439,27 @@ function drawSprite(ctx,s){
 function saveGame(){
   localStorage.setItem('chiroventure_save',JSON.stringify(G));
   showModal('Game Saved','Your progress has been saved.','info',[{label:'OK',desc:''}],closeModal);
+}
+function resetAllProgress(){
+  // Two-step confirmation because this is destructive
+  showConfirm(
+    '⚠ RESET ALL PROGRESS?\n\nThis will permanently erase:\n• All wins, losses, and games played\n• All unlocked practice styles (back to General only)\n• All unlocked win conditions (back to Empire + Specialty)\n• All unlocked clinic tiers (back to Small Suite only)\n• All achievements\n• Any saved in-progress game\n\nThis cannot be undone. Continue?',
+    () => {
+      showConfirm(
+        'Are you ABSOLUTELY sure? Last chance to back out.',
+        () => {
+          try{ localStorage.removeItem('chiroventure_save'); }catch(e){}
+          try{ localStorage.removeItem('chiroventure_meta'); }catch(e){}
+          // Reset in-memory META to defaults
+          if(typeof resetMeta === 'function') resetMeta();
+          showAlert('All progress wiped. Reloading...','info');
+          setTimeout(()=>{ window.location.reload(); }, 800);
+        },
+        'warn'
+      );
+    },
+    'warn'
+  );
 }
 function loadGame(){
   const s=localStorage.getItem('chiroventure_save');
