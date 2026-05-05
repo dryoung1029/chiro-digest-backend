@@ -687,6 +687,8 @@ const UNLOCK_GATES={
   hard_mode:           ()=>META.gamesWon>=1,
   advanced_events:     ()=>META.normalWins>=1,
   staff_partner_offer: ()=>META.totalAchievements.includes('first_hire'),
+  tier_medium:         ()=>META.gamesWon>=1,
+  tier_large:          ()=>META.gamesWon>=2 || (META.winConditionsAchieved||[]).includes('specialty'),
 };
 const UNLOCK_LABELS={
   seasonal_patterns:   'Seasonal Patient Patterns',
@@ -1044,19 +1046,59 @@ const MARKETING_ACTIVITIES = {
 // Stored as loc.upgrades = ['seating', 'coffee', ...] — bought once, permanent.
 const CLINIC_UPGRADES=[
   // Waiting Room
-  {id:'seating',    cat:'Waiting Room', label:'Ergonomic Seating',        cost:800,  expBonus:5,  desc:'Comfortable chairs throughout. Patients notice immediately.'},
-  {id:'coffee',     cat:'Waiting Room', label:'Coffee & Tea Station',      cost:500,  expBonus:4,  desc:'Small touch, big impression. Makes waits feel shorter.'},
-  {id:'kids_corner',cat:'Waiting Room', label:"Kids' Play Corner",         cost:700,  expBonus:4,  repBonus:0.3, desc:'Families love it. Boosts family word-of-mouth referrals.'},
-  {id:'tv_wifi',    cat:'Waiting Room', label:'TV & Free Wi-Fi',           cost:1200, expBonus:4,  desc:'Reduces perceived wait time significantly.'},
+  {id:'seating',    cat:'Waiting Room', label:'Ergonomic Seating',        cost:800,  expBonus:5,  tier:'basic', desc:'Comfortable chairs throughout. Patients notice immediately.'},
+  {id:'coffee',     cat:'Waiting Room', label:'Coffee & Tea Station',      cost:500,  expBonus:4,  tier:'basic', desc:'Small touch, big impression. Makes waits feel shorter.'},
+  {id:'kids_corner',cat:'Waiting Room', label:"Kids' Play Corner",         cost:700,  expBonus:4,  repBonus:0.3, tier:'mid', desc:'Families love it. Boosts family word-of-mouth referrals.'},
+  {id:'tv_wifi',    cat:'Waiting Room', label:'TV & Free Wi-Fi',           cost:1200, expBonus:4,  tier:'mid', desc:'Reduces perceived wait time significantly.'},
   // Ambiance
-  {id:'decor',      cat:'Ambiance',     label:'Professional Decor',        cost:1800, expBonus:6,  repBonus:0.4, desc:'Polished first impression. Subtle but lasting rep boost.'},
-  {id:'music',      cat:'Ambiance',     label:'Sound System & Curated Music',cost:800, expBonus:3,  desc:'Calming atmosphere. Patients feel at ease.'},
-  {id:'plants',     cat:'Ambiance',     label:'Living Plants & Artwork',   cost:600,  expBonus:3,  desc:'Biophilic design proven to reduce patient anxiety.'},
+  {id:'decor',      cat:'Ambiance',     label:'Professional Decor',        cost:1800, expBonus:6,  repBonus:0.4, tier:'advanced', desc:'Polished first impression. Subtle but lasting rep boost.'},
+  {id:'music',      cat:'Ambiance',     label:'Sound System & Curated Music',cost:800, expBonus:3,  tier:'basic', desc:'Calming atmosphere. Patients feel at ease.'},
+  {id:'plants',     cat:'Ambiance',     label:'Living Plants & Artwork',   cost:600,  expBonus:3,  tier:'basic', desc:'Biophilic design proven to reduce patient anxiety.'},
   // Technology
-  {id:'checkin',    cat:'Technology',   label:'Digital Check-In Tablets',  cost:1500, expBonus:5,  collectionsBonus:0.02, desc:'Faster intake, fewer errors. Boosts collections rate +2%.'},
-  {id:'reminders',  cat:'Technology',   label:'Automated Appointment Reminders', cost:2000, expBonus:4, noShowReduction:0.12, desc:'Reduces no-shows ~12%. Patients feel cared for.'},
-  {id:'portal',     cat:'Technology',   label:'Patient Portal / App',      cost:3000, expBonus:5,  retentionBonus:0.01, desc:'Patients can book, review records, message you. Retention +1%.'},
+  {id:'checkin',    cat:'Technology',   label:'Digital Check-In Tablets',  cost:1500, expBonus:5,  collectionsBonus:0.02, tier:'mid', desc:'Faster intake, fewer errors. Boosts collections rate +2%.'},
+  {id:'reminders',  cat:'Technology',   label:'Automated Appointment Reminders', cost:2000, expBonus:4, noShowReduction:0.12, tier:'advanced', desc:'Reduces no-shows ~12%. Patients feel cared for.'},
+  {id:'portal',     cat:'Technology',   label:'Patient Portal / App',      cost:3000, expBonus:5,  retentionBonus:0.01, tier:'elite', desc:'Patients can book, review records, message you. Retention +1%.'},
 ];
+
+function upgradeTierUnlocked(tier){
+  if(tier==='basic') return true;
+  if(tier==='mid') return META.gamesWon>=1;
+  if(tier==='advanced') return (META.totalAchievements||[]).includes('first_hire');
+  if(tier==='elite') return (META.totalAchievements||[]).includes('century_club');
+  return true;
+}
+function upgradeTierUnlockText(tier){
+  switch(tier){
+    case 'mid': return 'Win 1 game to unlock';
+    case 'advanced': return 'Hire your first staff member';
+    case 'elite': return 'Reach 100 active patients (Century Club)';
+  }
+  return '';
+}
+
+// ── Owner Morale System ──
+function adjustOwnerMorale(delta, reason){
+  if(!G) return;
+  const old = G.ownerMorale || 75;
+  G.ownerMorale = Math.max(0, Math.min(100, old + delta));
+  if(G.ownerMorale > (G.peakOwnerMorale||0)) G.peakOwnerMorale = G.ownerMorale;
+  if(G.ownerMorale < (G.lowestOwnerMorale==null?100:G.lowestOwnerMorale)) G.lowestOwnerMorale = G.ownerMorale;
+  if(Math.abs(delta) >= 5 && reason){
+    const symbol = delta > 0 ? '😊' : '😟';
+    const sign = delta > 0 ? '+' : '';
+    logEv(G, delta>0?'pos':'warn', `${symbol} Owner morale ${sign}${delta}: ${reason}`);
+  }
+  // Threshold crossings
+  if(old >= 50 && G.ownerMorale < 50){
+    logEv(G, 'warn', '⚠️ Your morale has dropped — running this practice is wearing on you. You need a win.');
+  } else if(old < 50 && G.ownerMorale >= 50){
+    logEv(G, 'pos', '✨ You\'re feeling renewed about the practice — good work.');
+  } else if(old < 80 && G.ownerMorale >= 80){
+    logEv(G, 'pos', '🌟 You\'re thriving — energized, confident, on top of your game.');
+  } else if(old >= 30 && G.ownerMorale < 30){
+    logEv(G, 'neg', '😔 You\'re burned out and demoralized. Something needs to change.');
+  }
+}
 
 // Monthly Marketing Points: base per difficulty + bonuses from manager/certifications
 // Each activity costs MP (see mp field above). Social media costs 1 MP per $300 budget.
@@ -1146,6 +1188,16 @@ function newGame(doctorName, clinicName, tierId, difficulty, styleId){
 
     // Burnout tracking
     ownerBurnoutMonths:0, ownerBurnout:false,
+
+    // Owner morale system (separate from burnout)
+    ownerMorale: 75,
+    ownerMoraleHistory: [],
+    lastMonthRevenueForMorale: 0,
+    peakOwnerMorale: 75,
+    lowestOwnerMorale: 75,
+    ownerMoraleMilestones: [],
+    firstProfitableMonthLogged: false,
+    firstProfitableMonth: -1,
 
     insApps:[], insApproved:[],
     staffPool:{}, nextStaffId:1,
@@ -2214,6 +2266,7 @@ const RANDOM_EVENTS = [
    ],
    effect:(G,li,ctx)=>{
      if(!G.majorLawsuitFired) G.majorLawsuitFired=true;
+     adjustOwnerMorale(-15, 'Major lawsuit hit hard');
      const loc=G.locs[li];
      if(ctx.choice===0){
        const base=randInt(25000,65000);
@@ -2595,6 +2648,20 @@ function calcDCHoursAvailable(G, li){
   const overheadRatio = calcOverheadRatio(G, li);
   const overheadEffPenalty = overheadRatio < 0.50 ? 0.90 : overheadRatio < 0.75 ? 0.95 : 1.0;
   totalHrs = Math.round(totalHrs * overheadEffPenalty);
+  // Owner morale affects the owner's effective hours (only at the owner's location)
+  // Gentler curve — small bonus when thriving, real penalty only when truly burned out
+  {
+    const ownerHere = loc.staff.some(id=>G.staffPool[id]?.isOwner);
+    if(ownerHere){
+      const om = G.ownerMorale || 75;
+      let omMult = 1.0;
+      if(om >= 80) omMult = 1.05;       // thriving — modest bonus
+      else if(om >= 50) omMult = 1.0;   // baseline (wide steady zone)
+      else if(om >= 30) omMult = 0.95;  // mild stress
+      else omMult = 0.88;                // demoralized/burned out
+      totalHrs = Math.round(totalHrs * omMult);
+    }
+  }
   const numDCs = countDCs(G, li);
   return {totalHrs, mktHrs, available: Math.max(0, totalHrs - mktHrs), numDCs, hasMgr};
 }
@@ -2752,6 +2819,12 @@ function calcPatientFlow(G, li){
   // ── Cash-pay new patients (from marketing) ──
   let newCash = calcMarketingLeads(G, li);
   newCash *= (styleObj.flowMult||1.0);
+  // Owner morale subtly affects new patient flow (charisma, energy)
+  {
+    const _om = G.ownerMorale||75;
+    const omFlowMult = _om >= 80 ? 1.03 : _om < 25 ? 0.95 : 1.0;
+    newCash *= omFlowMult;
+  }
 
   // Feature 3: Soft launch — new locations ramp up over 2 months
   if((loc.softLaunchMonthsLeft||0) > 0) newCash *= 0.5;
@@ -3670,6 +3743,7 @@ function processLoans(G){
         G.studentLoansPaidOff = true;
         G.studentLoansPaidOffMonth = G.totalMonths;
         G.loansPaidOff = (G.loansPaidOff||0) + 1;
+        adjustOwnerMorale(+25, 'Student loans finally paid off!');
         loan.balance = 0;
         loan.monthsLeft = 0;
       }
@@ -3755,6 +3829,12 @@ function yearEndTax(G){
 function checkWinLose(G){
   // Lose: 2 consecutive negative months
   if(G.cash<0){
+    if(!G.ownerMoraleMilestones) G.ownerMoraleMilestones = [];
+    const negKey = 'neg_cash_'+G.totalMonths;
+    if(G.ownerMoraleMilestones.indexOf(negKey) < 0){
+      G.ownerMoraleMilestones.push(negKey);
+      adjustOwnerMorale(-5, 'Cash went negative this month — financial stress');
+    }
     G.consecutiveNegMonths++;
     if(G.consecutiveNegMonths>=2){G.gameOver=true;G.gameOverReason='bankrupt';return;}
   } else { G.consecutiveNegMonths=0; }
@@ -3936,6 +4016,7 @@ function _advanceMonthCore(){
       const failThreshold = eq.condition>85 ? 0.97 : eq.condition>70 ? 0.93 : 0.82;
       if((eq.totalMissed||0)>=8 && Math.random()>failThreshold){
         eq.catastrophicFailure=true;
+        adjustOwnerMorale(-3, 'Equipment failed catastrophically');
         logEv(G,'neg',`[${loc.name}] ${eq.name} suffered a catastrophic failure after ${eq.totalMissed} missed maintenance months!`);
         const newCost=2500; const usedCost=1500;
         const eqRef=eq; // close over for effect
@@ -3995,6 +4076,7 @@ function _advanceMonthCore(){
         const cat=EQUIPMENT_CATALOG.find(c=>c.id===se.id);
         const catName=cat?cat.name:se.id;
         const newCost=cat?cat.cost:10000; const usedCost=Math.round(newCost*0.55);
+        adjustOwnerMorale(-3, 'Specialty equipment failed');
         logEv(G,'neg',`[${loc.name}] ${catName} suffered catastrophic failure!`);
         const seRef=se;
         eventQueue.push({ev:{
@@ -4145,6 +4227,43 @@ function _advanceMonthCore(){
   const gExp=calcGlobalExpenses(G);
   G.cash-=gExp; totalExp+=gExp;
   G.lastMonthRevenue = totalRev;
+
+  // ── Owner morale: revenue MoM tracking ──
+  {
+    const prevRev = G.lastMonthRevenueForMorale || 0;
+    if(prevRev > 100 && totalRev > 0){
+      const pctChange = (totalRev - prevRev) / prevRev;
+      if(pctChange >= 0.20){
+        adjustOwnerMorale(+5, `Revenue up ${Math.round(pctChange*100)}% from last month`);
+      } else if(pctChange <= -0.20){
+        adjustOwnerMorale(-5, `Revenue down ${Math.round(Math.abs(pctChange)*100)}% from last month`);
+      }
+    }
+    G.lastMonthRevenueForMorale = totalRev;
+  }
+
+  // ── Owner morale: monthly drift back toward baseline (60) ──
+  // Without this, a single bad streak permanently sinks morale. People recover.
+  {
+    const om = G.ownerMorale || 75;
+    if(om < 60) G.ownerMorale = Math.min(60, om + 1.5);       // climb back to 60 if demoralized
+    else if(om > 80) G.ownerMorale = Math.max(80, om - 0.5);  // mild decay from peaks (can't stay euphoric forever)
+  }
+
+  // ── Owner morale: patient milestones ──
+  {
+    if(!G.ownerMoraleMilestones) G.ownerMoraleMilestones = [];
+    const totalActivePatients = G.locs.reduce((s,l)=>s+l.patients.cash+l.patients.insured,0);
+    const milestones = [50, 100, 250, 500, 1000, 1500];
+    for(const m of milestones){
+      const key = `pts_${m}`;
+      if(totalActivePatients >= m && !G.ownerMoraleMilestones.includes(key)){
+        G.ownerMoraleMilestones.push(key);
+        adjustOwnerMorale(+10, `🎯 Reached ${m} active patients — a real milestone`);
+      }
+    }
+  }
+
   processLoans(G);
 
   // ── Owner personal expenses (always deducted, even in losing months) ──
@@ -4156,6 +4275,13 @@ function _advanceMonthCore(){
   G.cash-=ownerDraw;
   G.lastOwnerDraw=ownerDraw;
   G.annualRevenue+=totalRev; G.annualExpenses+=totalExp+ownerDraw;
+
+  // ── Owner morale: first profitable month ──
+  if(totalRev > totalExp && !G.firstProfitableMonthLogged){
+    G.firstProfitableMonthLogged = true;
+    G.firstProfitableMonth = G.totalMonths;
+    adjustOwnerMorale(+10, 'First profitable month — the practice is real now');
+  }
 
   // Feature 5: Billing audit countdown and resolution
   if(G.auditMonths>0){
@@ -4203,6 +4329,7 @@ function _advanceMonthCore(){
       G.ownerBurnoutMonths=(G.ownerBurnoutMonths||0)+1;
       if(G.ownerBurnoutMonths===3){
         G.ownerBurnout=true;
+        adjustOwnerMorale(-15, 'You\'re burned out from overwork');
         eventQueue.push({ev:{
           id:'burnout',type:'warn',title:'⚠ Burnout Warning',
           msg:`Dr. ${G.doctorName}, you've been at over 85% capacity for 3 months straight.\n\nYour productivity has dropped 15% and morale is suffering. Hire an Associate DC or add another table to spread the load.`,
@@ -4211,7 +4338,7 @@ function _advanceMonthCore(){
         },li:0,ctx:{}});
       }
     } else {
-      if(G.ownerBurnoutMonths>=3){ logEv(G,'pos',`Dr. ${G.doctorName} has recovered from burnout — productivity restored.`); G.burnoutRecoveries=(G.burnoutRecoveries||0)+1; }
+      if(G.ownerBurnoutMonths>=3){ logEv(G,'pos',`Dr. ${G.doctorName} has recovered from burnout — productivity restored.`); G.burnoutRecoveries=(G.burnoutRecoveries||0)+1; adjustOwnerMorale(+10, 'Recovered from burnout'); }
       G.ownerBurnoutMonths=0; G.ownerBurnout=false;
     }
   }
@@ -4330,6 +4457,7 @@ function checkAchievements(G){
       G.achievements.push(a.id);
       logEv(G,'pos',`\uD83C\uDFC6 Achievement unlocked: ${a.title}`);
       showAchievementToast(a);
+      adjustOwnerMorale(+5, `Achievement unlocked: ${a.title}`);
     }
   }
   // Also check extra achievements not in ACHIEVEMENTS array
@@ -4554,6 +4682,13 @@ function renderSidebar(){
     <div class="sb-row"><span class="k">Staff</span><span class="v">${loc.staff.length}</span></div>
     <div class="sb-row"><span class="k">Locations</span><span class="v">${G.locs.length}</span></div>
     <div class="sb-row"><span class="k">★ Reviews</span><span class="v ${stars===null?'':stars>=4?'pos':stars<3?'neg':'warn'}">${stars===null?'—':stars.toFixed(1)}</span></div>
+    ${(()=>{
+      const om = G.ownerMorale==null?75:G.ownerMorale;
+      const moodEmoji = om>=90?'🤩':om>=75?'😊':om>=50?'🙂':om>=25?'😟':'😰';
+      const moodLabel = om>=90?'Thriving':om>=75?'Confident':om>=50?'Steady':om>=25?'Stressed':'Burned Out';
+      const moodColor = om>=75?'var(--green)':om>=50?'var(--cyan)':om>=25?'var(--amber)':'var(--red)';
+      return `<div class="sb-row" title="Your morale shifts with how the practice is going"><span class="k">Your Morale</span><span class="v" style="color:${moodColor};font-weight:600">${moodEmoji} ${moodLabel} (${om})</span></div>`;
+    })()}
     ${(()=>{
       // Feature 1: Show permanent competitor count
       const perms=(G.permanentCompetitors||[]).filter(c=>c.locIdx===li).length;
@@ -5223,15 +5358,21 @@ function renderRooms(){
         for(const upg of items){
           const owned=(loc.upgrades||[]).includes(upg.id);
           const canAfford=G.cash>=upg.cost;
-          html+=`<div style="background:var(--s2);border:1px solid ${owned?'var(--green)':'var(--border)'};border-radius:6px;padding:8px;display:flex;align-items:center;gap:8px">
+          const tierUnlocked = upgradeTierUnlocked(upg.tier||'basic');
+          const lockedNote = !tierUnlocked ? `<div style="font-size:10px;color:var(--amber);margin-top:2px">🔒 ${upgradeTierUnlockText(upg.tier)}</div>` : '';
+          const borderColor = owned ? 'var(--green)' : (!tierUnlocked ? 'var(--amber)' : 'var(--border)');
+          html+=`<div style="background:var(--s2);border:1px solid ${borderColor};border-radius:6px;padding:8px;display:flex;align-items:center;gap:8px;opacity:${tierUnlocked?1:0.55}">
             <div style="flex:1">
-              <span style="font-size:12px;font-weight:600;color:${owned?'var(--green)':'var(--text)'}">${owned?'✓ ':''}"${upg.label}"</span>
+              <span style="font-size:12px;font-weight:600;color:${owned?'var(--green)':'var(--text)'}">${owned?'✓ ':(!tierUnlocked?'🔒 ':'')}"${upg.label}"</span>
               <div style="font-size:10px;color:var(--muted);margin-top:2px">${upg.desc}</div>
               <div style="font-size:10px;color:var(--cyan);margin-top:2px">+${upg.expBonus} Patient Exp${upg.repBonus?' · +'+upg.repBonus+' rep/mo':''}${upg.collectionsBonus?' · +'+Math.round(upg.collectionsBonus*100)+'% collections':''}${upg.retentionBonus?' · retention +'+Math.round(upg.retentionBonus*100)+'%':''}</div>
+              ${lockedNote}
             </div>
             ${owned
               ? '<span style="font-size:10px;color:var(--green);flex-shrink:0">INSTALLED</span>'
-              : `<button class="btn btn-cyan" style="font-size:10px;padding:4px 10px;flex-shrink:0" onclick="buyUpgrade('${upg.id}',${li})" ${!canAfford?'disabled':''}>${canAfford?`$${fmtN(upg.cost)}`:`Need $${fmtN(upg.cost)}`}</button>`}
+              : !tierUnlocked
+                ? '<span style="font-size:10px;color:var(--amber);flex-shrink:0">LOCKED</span>'
+                : `<button class="btn btn-cyan" style="font-size:10px;padding:4px 10px;flex-shrink:0" onclick="buyUpgrade('${upg.id}',${li})" ${!canAfford?'disabled':''}>${canAfford?`$${fmtN(upg.cost)}`:`Need $${fmtN(upg.cost)}`}</button>`}
           </div>`;
         }
         html+=`</div>`;
@@ -5768,6 +5909,7 @@ function crisisConsultant(li){
     const staff = loc.staff.map(id=>G.staffPool[id]).filter(s=>s&&!s.isOwner);
     for(const s of staff) s.morale = Math.min(100, (s.morale||75) + 20);
     loc.crisisConsultCooldown = G.totalMonths + 6;
+    adjustOwnerMorale(+5, 'Crisis intervention helped');
     logEv(G, 'pos', `[${loc.name}] Crisis Consultant hired — all staff morale +20, rep stabilized for 6 months ($5,000)`);
     renderTab('rooms'); renderSidebar();
   }, 'warn');
@@ -5803,6 +5945,7 @@ function buyUpgrade(upgradeId, li){
   const loc=G.locs[li];
   const upg=CLINIC_UPGRADES.find(u=>u.id===upgradeId);
   if(!upg) return;
+  if(!upgradeTierUnlocked(upg.tier||'basic')){ showAlert(`Locked: ${upgradeTierUnlockText(upg.tier)}`,'warn'); return; }
   if((loc.upgrades||[]).includes(upgradeId)){showAlert('Already installed.','warn');return;}
   if(G.cash<upg.cost){showAlert(`Need $${fmtN(upg.cost)}.`,'warn');return;}
   showConfirm(`Install "${upg.label}" for $${fmtN(upg.cost)}?\n\n${upg.desc}`,()=>{
@@ -5857,6 +6000,7 @@ function fireStaff(id){
     delete G.staffPool[id];
     // Feature 6: Track total firings for debrief
     G.totalFirings = (G.totalFirings||0) + 1;
+    adjustOwnerMorale(-3, 'Letting an employee go is never easy');
     logEv(G,'info',`${s.name} has been let go`);
     renderTab('rooms'); renderSidebar();
   }),'warn');
@@ -6005,6 +6149,8 @@ function openLocation(tierId){
       G.locs.push(newLocObj);
       logEv(G,'warn',`Expansion cost: -$${fmtN(expansionCost)} for ${name} build-out and deposits.`);
       logEv(G,'pos',`New location opened: ${name} (${tier.name}, $${fmtN(tier.rent)}/mo) — Soft launch: 50% patient flow for first 2 months.`);
+      if(newIdx===1) adjustOwnerMorale(+8, 'Opened a second location — growing the practice');
+      else if(newIdx===2) adjustOwnerMorale(+10, 'Opened a third location — scaling up');
       selectedLoc=newIdx;
       render();
     }
@@ -6382,9 +6528,10 @@ function showEndScreen(){
     debriefEl.innerHTML=`
     <div style="margin-top:16px;background:var(--s2);border:1px solid var(--border2);border-radius:8px;padding:14px">
       <div style="font-size:12px;font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Practice Report</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:10px">
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:10px">
         <div style="text-align:center"><div style="font-size:18px;font-weight:700;color:var(--text)">${peakPts}</div><div style="font-size:10px;color:var(--muted)">Peak Patients</div></div>
-        <div style="text-align:center"><div style="font-size:18px;font-weight:700;color:${lowestMorale<40?'var(--red)':lowestMorale<60?'var(--amber)':'var(--green)'}">${lowestMorale}%</div><div style="font-size:10px;color:var(--muted)">Lowest Morale</div></div>
+        <div style="text-align:center"><div style="font-size:18px;font-weight:700;color:${lowestMorale<40?'var(--red)':lowestMorale<60?'var(--amber)':'var(--green)'}">${lowestMorale}%</div><div style="font-size:10px;color:var(--muted)">Lowest Staff Morale</div></div>
+        <div style="text-align:center"><div style="font-size:18px;font-weight:700;color:${(G.lowestOwnerMorale==null?75:G.lowestOwnerMorale)<40?'var(--red)':'var(--amber)'}">${G.lowestOwnerMorale==null?75:G.lowestOwnerMorale}</div><div style="font-size:10px;color:var(--muted)">Lowest Owner Morale</div></div>
         <div style="text-align:center"><div style="font-size:18px;font-weight:700;color:var(--text)">${firings}</div><div style="font-size:10px;color:var(--muted)">Staff Fired</div></div>
         ${(()=>{
           const sl = (G.loans||[]).find(l => l.type === 'student');
@@ -6445,14 +6592,28 @@ function startGame(){
 //  INIT
 // ════════════════════════════════════════════════════════
 function buildSetupUI(){
+  // Force selected tier to 'small' if a locked tier was somehow selected
+  if(selectedLocTier==='medium' && !featureUnlocked('tier_medium')) selectedLocTier='small';
+  if(selectedLocTier==='large'  && !featureUnlocked('tier_large'))  selectedLocTier='small';
   const lc=document.getElementById('loc-cards');
-  lc.innerHTML=LOCATION_TIERS.map(t=>`
-    <div class="loc-card ${t.id===selectedLocTier?'selected':''}" onclick="selectLoc('${t.id}')">
+  lc.innerHTML=LOCATION_TIERS.map(t=>{
+    const unlocked = t.id==='small' || (t.id==='medium' && featureUnlocked('tier_medium')) || (t.id==='large' && featureUnlocked('tier_large'));
+    if(!unlocked){
+      const reqText = t.id==='medium' ? 'Win 1 game to unlock' : 'Win 2 games or achieve Specialty Excellence';
+      return `<div class="loc-card" style="opacity:0.45;cursor:not-allowed;pointer-events:none">
+        <div class="loc-name">🔒 ${t.name}</div>
+        <div class="loc-rooms">${t.rooms}</div>
+        <div class="loc-rent">$${fmtN(t.rent)}/mo</div>
+        <div class="loc-desc" style="color:var(--amber);font-size:10px">${reqText}</div>
+      </div>`;
+    }
+    return `<div class="loc-card ${t.id===selectedLocTier?'selected':''}" onclick="selectLoc('${t.id}')">
       <div class="loc-name">${t.name}</div>
       <div class="loc-rooms">${t.rooms}</div>
       <div class="loc-rent">$${fmtN(t.rent)}/mo</div>
       <div class="loc-desc">${t.desc}</div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   const dc=document.getElementById('diff-cards');
   const hardUnlocked=featureUnlocked('hard_mode');
   dc.innerHTML=[{id:'easy',label:'Easy',cash:85000},{id:'normal',label:'Normal',cash:45000},{id:'hard',label:'Hard',cash:50000}]
@@ -6518,8 +6679,10 @@ function buildSetupUI(){
   }
 }
 function selectLoc(id){
+  if(id==='medium' && !featureUnlocked('tier_medium')) return;
+  if(id==='large'  && !featureUnlocked('tier_large'))  return;
   selectedLocTier=id;
-  document.querySelectorAll('.loc-card').forEach(c=>c.classList.toggle('selected',c.onclick.toString().includes(`'${id}'`)));
+  document.querySelectorAll('.loc-card').forEach(c=>c.classList.toggle('selected',c.onclick&&c.onclick.toString().includes(`'${id}'`)));
   buildSetupUI();
 }
 function selectDiff(id){
